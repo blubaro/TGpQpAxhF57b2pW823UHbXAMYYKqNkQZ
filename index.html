@@ -226,6 +226,7 @@ function cueWork(){ beep(880,.12); setTimeout(()=>beep(1100,.16),140); vibrate([
 function cueRest(){ beep(520,.18); vibrate(70); }
 function cueDone(){ beep(660,.12); setTimeout(()=>beep(880,.12),130); setTimeout(()=>beep(1320,.22),270); vibrate([80,50,80,50,140]); }
 function cueTick(){ beep(700,.07,.18); vibrate(30); }
+function cueSoft(){ beep(440,.20,.10); vibrate(40); }
 function vibrate(p){ if(navigator.vibrate) try{navigator.vibrate(p);}catch(e){} }
 
 /* ---------- wake lock ---------- */
@@ -353,7 +354,7 @@ function doImport(){
    READY / overview
    ============================================================ */
 function focusTag(s){
-  const map={strength:"Kraft",superset:"Superset",interval:"Intervall",circuit:"Core",cardio:"Ausdauer",carry:"Carry",warmup:"Warmup",cooldown:"Cooldown"};
+  const map={strength:"Kraft",superset:"Superset",interval:"Intervall",circuit:"Core",cardio:"Ausdauer",carry:"Carry",warmup:"Warmup",cooldown:"Cooldown",mobility:"Mobility",plyo:"Plyo"};
   return map[s.type]||s.type;
 }
 function stepTitle(s){
@@ -364,13 +365,15 @@ function stepTitle(s){
   if(s.type==="superset")return s.label||"Superset";
   if(s.type==="cardio")return ({row:"Rudern",run:"Laufen",bike:"Bike"})[s.modality]||"Ausdauer";
   if(s.type==="carry")return s.name||"Carry";
+  if(s.type==="mobility")return s.label||"Mobility";
+  if(s.type==="plyo")return s.name||"Sprungkraft";
   return s.name||"Übung";
 }
 function renderReady(){
   S.screen="ready";
   const m=S.spec.meta||{}, rd=S.spec.readiness||{};
   const rows=S.spec.steps.map(s=>`<div class="kv">
-      <span><span class="tag ${s.type==='cardio'?'row':''}">${esc(focusTag(s))}</span> &nbsp;${esc(stepTitle(s))}</span>
+      <span><span class="tag ${s.type==='cardio'||s.type==='mobility'?'row':''}">${esc(focusTag(s))}</span> &nbsp;${esc(stepTitle(s))}</span>
       <b class="muted">${stepMetaShort(s)}</b></div>`).join("");
   setScreen(`
     <div class="eyebrow">${esc(m.phase||"")} ${m.week?("· Woche "+m.week):""}</div>
@@ -393,6 +396,8 @@ function stepMetaShort(s){
   if(s.type==="circuit")return `${s.rounds} Runden`;
   if(s.type==="cardio")return `${s.durationMin} min`;
   if(s.type==="carry")return `${s.rounds}×`;
+  if(s.type==="mobility")return `${(s.poses||[]).length} Posen`;
+  if(s.type==="plyo")return `${s.sets}×${repText(s.repTarget)}`;
   if((s.type==="warmup"||s.type==="cooldown")&&s.durationSec)return `${Math.round(s.durationSec/60)} min`;
   return "";
 }
@@ -423,7 +428,7 @@ function renderStep(){
   saveProgress();
   const r={warmup:renderChecklist,cooldown:renderChecklist,strength:renderStrength,
     superset:renderSuperset,interval:renderInterval,circuit:renderCircuit,
-    cardio:renderCardio,carry:renderCarry}[s.type];
+    cardio:renderCardio,carry:renderCarry,mobility:renderMobility,plyo:renderPlyo}[s.type];
   if(r) r(s); else { skipStep("Unbekannter Schritt-Typp: "+s.type); }
 }
 function skipStep(reason){
@@ -550,6 +555,66 @@ function skipExercise(){
   rs.status="skipped"; rs.skipReason=why.trim()||"übersprungen";
   if(rs.log&&!rs.log.length) delete rs.log;
   toast("Übung übersprungen"); nextStep();
+}
+
+/* ---- PLYO (Sprungkraft / Plyometrie) — Qualität & Explosivität statt Versagen, kein RIR ---- */
+function renderPlyo(s){
+  const rs=S.result.steps[S.stepIdx];
+  if(!rs.log) rs.log=[];
+  const setNo=rs.log.length;
+  if(setNo>=s.sets){ return plyoDone(s,rs); }
+  const hasLoad = s.load && s.load.kg!=null;
+  const prev=rs.log[setNo-1];
+  const defReps = prev?prev.reps:(Array.isArray(s.repTarget)?s.repTarget[0]:s.repTarget);
+  const defLoad = prev?prev.load:(hasLoad?s.load.kg:0);
+  if(S.sub.reps==null){ S.sub.reps=defReps; S.sub.load=defLoad; }
+  const done=rs.log.map((l,i)=>`<div class="set-row"><div class="n ok">${i+1}</div>
+     <span>${l.reps} Wdh${l.load?(" · "+l.load+" kg"):""}</span></div>`).join("");
+  const loadLabel = hasLoad ? (" · "+esc(s.load.text||(s.load.kg+" kg"))) : (s.load&&s.load.text?(" · "+esc(s.load.text)):"");
+  setRun(`
+    <div class="eyebrow">Satz ${setNo+1} von ${s.sets} · Sprungkraft</div>
+    <h1 style="margin:4px 0 2px">${esc(s.name)}</h1>
+    <p class="muted" style="margin-bottom:12px">
+      Ziel ${esc(repText(s.repTarget))} Wdh${s.boxHeightCm?(" · Box "+s.boxHeightCm+" cm"):""}${loadLabel}</p>
+    <div class="note" style="margin-bottom:14px">⚡ Explosiv, sauber landen — volle Erholung zwischen den Sätzen, <b>nicht</b> bis zur Erschöpfung.</div>
+    ${s.note?`<div class="note" style="margin-bottom:14px">${esc(s.note)}</div>`:""}
+    ${s.lastTime?`<div class="note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
+    <div class="card">
+      ${stepperField("Wiederholungen","reps",1,"Wdh")}
+      ${hasLoad?plyoLoadField():""}
+    </div>
+    ${done?`<div class="card"><div class="eyebrow" style="margin-bottom:4px">Erledigt</div>${done}</div>`:""}`);
+  setBar(`<div class="btn-row">
+      <button class="btn sec sm" style="flex:none;width:46%" onclick="skipExercise()">Übung überspringen</button>
+      <button class="btn" onclick="logPlyo()">${setNo+1<s.sets?"Satz fertig → Pause":"Satz fertig"}</button>
+    </div>`);
+}
+function plyoLoadField(){
+  return `<div class="field"><div class="lab">Last <span class="hint">kg</span></div>
+    <div class="stepper">
+      <button onclick="bump('load',-2)">–</button>
+      <div class="val"><b class="tnum" id="v-load">${S.sub.load}</b><small>kg</small></div>
+      <button onclick="bump('load',2)">+</button>
+    </div></div>`;
+}
+function logPlyo(){
+  const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
+  const entry={reps:S.sub.reps};
+  if(S.sub.load) entry.load=S.sub.load;
+  rs.log.push(entry);
+  S.sub.reps=null;
+  if(rs.log.length<s.sets){ startRest(s.restSec||90); }
+  else { rs.status="done"; cueDone(); renderStep(); }
+}
+function plyoDone(s,rs){
+  setRun(`
+    <div class="eyebrow">Übung erledigt</div>
+    <h1 style="margin:4px 0 12px">${esc(s.name)} ✓</h1>
+    <div class="card">${rs.log.map((l,i)=>`<div class="set-row"><div class="n ok">${i+1}</div>
+        <span>${l.reps} Wdh${l.load?(" · "+l.load+" kg"):""}</span></div>`).join("")}</div>
+    <div class="field"><div class="lab">Notiz zur Übung (optional)</div>
+      <textarea class="txt" id="exNote" placeholder="z.B. Landung sauber, nächstes Mal Box +10 cm">${esc(rs.note||"")}</textarea></div>`);
+  setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`);
 }
 
 /* ---- REST timer (between sets) ---- */
@@ -761,6 +826,72 @@ function circuitDone(s){
   setRun(`<div class="eyebrow">Core fertig</div>
     <h1 style="margin:4px 0 12px">${esc(s.label||"Core-Finisher")} ✓</h1>
     <div class="field"><div class="lab">Notiz (optional)</div><textarea class="txt" id="exNote"></textarea></div>`);
+  setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`);
+}
+
+/* ---- MOBILITY (RomWOD / Yin) — ruhige Holds, Recovery, kein Trainingsreiz ---- */
+function buildMobility(s){
+  const ph=[], rounds=s.rounds||1, rest=s.restBetweenRoundsSec||0;
+  for(let r=0;r<rounds;r++){
+    (s.poses||[]).forEach(p=>{
+      if(p.perSide){
+        ph.push({sec:p.durationSec||60,name:p.name,side:"links",cue:p.cue,round:r});
+        ph.push({sec:p.durationSec||60,name:p.name,side:"rechts",cue:p.cue,round:r});
+      } else {
+        ph.push({sec:p.durationSec||60,name:p.name,cue:p.cue,round:r});
+      }
+    });
+    if(rest>0 && r<rounds-1) ph.push({sec:rest,name:"Pause",rest:true,round:r});
+  }
+  return ph;
+}
+function renderMobility(s){
+  if(!S.sub.phases){ S.sub.phases=buildMobility(s); S.sub.pi=0; S.sub.running=false; }
+  mobilityShow(s);
+}
+function mobilityShow(s){
+  const ph=S.sub.phases, i=S.sub.pi, p=ph[i];
+  if(!p){ return mobilityDone(s); }
+  const totalPoses=ph.filter(x=>!x.rest).length;
+  const poseIdx=ph.slice(0,i+1).filter(x=>!x.rest).length;
+  const next=ph[i+1];
+  const nextLabel=next?(next.rest?"Pause":esc(next.name)+(next.side?(" · "+next.side):"")):"fertig";
+  setRun(`<div class="phase-rest">
+    <div class="center" style="margin:6px 0">
+      <span class="pill rest">${esc(s.label||"Mobility")} · ${p.rest?"Pause":(poseIdx+" / "+totalPoses)}</span>
+    </div>
+    <h1 class="center" style="margin:10px 0 0;font-size:23px">${esc(p.name)}${p.side?` <span class="muted" style="font-weight:600">· ${p.side}</span>`:""}</h1>
+    <div class="timer" id="moWrap">${ring(1,p.rest?"pause":"halten",mmss(p.sec))}</div>
+    <div class="note center">${p.cue?esc(p.cue):"Tief atmen — mit jedem Ausatmen ein Stück tiefer sinken, ohne zu forcieren."}</div>
+    ${next?`<p class="center muted" style="margin-top:12px;font-size:13px">Als Nächstes: ${nextLabel}</p>`:""}
+  </div>`);
+  if(!S.sub.running){
+    setBar(`<button class="btn" onclick="moStart()">${i===0?"Mobility starten":"Weiter"}</button>`);
+  } else {
+    setBar(`<div class="btn-row">
+      <button class="btn sec" style="flex:none;width:34%" onclick="moPause()">${Timer.paused?"Weiter":"Pause"}</button>
+      <button class="btn" onclick="moSkip()">Pose überspringen</button></div>`);
+  }
+}
+function moStart(){ S.sub.running=true; moRun(); }
+function moRun(){
+  const s=S.spec.steps[S.stepIdx], ph=S.sub.phases, p=ph[S.sub.pi];
+  if(!p) return mobilityDone(s);
+  mobilityShow(s);
+  cueSoft();
+  Timer.start(p.sec,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,p.rest?"pause":"halten",mmss(rem)); },
+    ()=>{ moAdvance(); });
+}
+function moAdvance(){ S.sub.pi++; const s=S.spec.steps[S.stepIdx];
+  if(S.sub.pi<S.sub.phases.length) moRun(); else { cueSoft(); mobilityDone(s); } }
+function moPause(){ if(Timer.paused)Timer.resume();else Timer.pause(); mobilityShow(S.spec.steps[S.stepIdx]); }
+function moSkip(){ Timer.stop(); moAdvance(); }
+function mobilityDone(s){
+  Timer.stop(); const rs=S.result.steps[S.stepIdx]; rs.status="done"; rs.done=true;
+  setRun(`<div class="eyebrow">Mobility fertig</div>
+    <h1 style="margin:4px 0 12px">${esc(s.label||"Mobility")} ✓</h1>
+    <div class="note" style="margin-bottom:14px">Schön gemacht — Recovery zählt, auch wenn sie keine Sätze aufs Konto bucht.</div>
+    <div class="field"><div class="lab">Notiz (optional)</div><textarea class="txt" id="exNote" placeholder="z.B. Hüfte rechts deutlich enger als links"></textarea></div>`);
   setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`);
 }
 
