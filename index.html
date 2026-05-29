@@ -1131,8 +1131,41 @@ function restartAll(){ clearSaved(); S={screen:"import",spec:null,result:null,st
    layout helper — wrap scroll content height
    ============================================================ */
 
+/* ============================================================
+   Workout aus URL-Hash laden  —  #w=<encodeURIComponent(json)>
+   Vom Coach erzeugter Direktlink: ein Tap → direkt zur Übersicht.
+   ============================================================ */
+function tryLoadFromURL(){
+  let hash="";
+  try{ hash=location.hash||""; }catch(e){ return false; }
+  const m=hash.match(/^#w=([\s\S]+)$/);
+  if(!m) return false;
+  // URL säubern: kein Reload beim Refresh, saubere Adressleiste
+  try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){}
+  let o=null;
+  try{ o=JSON.parse(decodeURIComponent(m[1])); }catch(e){ o=null; }
+  const errs=validateSpec(o);
+  if(errs.length){
+    renderImport();
+    const box=$("impErr");
+    if(box) box.innerHTML=`<div class="note" style="color:var(--accent-ink);border-color:var(--accent)">
+      <b>Link-Workout konnte nicht geladen werden:</b><br>${errs.map(esc).join("<br>")}<br>
+      Bitte den JSON-Block manuell einfügen.</div>`;
+    return true; // Boot ist behandelt (Import-Screen mit Fehler steht)
+  }
+  if(o.schemaVersion && o.schemaVersion>SCHEMA){
+    toast(`Spec ist Schema v${o.schemaVersion} · App kennt v${SCHEMA}`);
+  }
+  S.spec=o;
+  S.result=JSON.parse(JSON.stringify(o));
+  S.result.kind="workout-result";
+  S.stepIdx=0; S.sub={}; S.startedAt=null;
+  renderReady();
+  return true;
+}
+
 /* ---------- boot ---------- */
-renderImport();
+if(!tryLoadFromURL()) renderImport();
 </script>
 </body>
 </html>
