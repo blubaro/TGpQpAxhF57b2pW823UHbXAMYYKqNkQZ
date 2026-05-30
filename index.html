@@ -52,6 +52,8 @@ h2{font-size:19px;font-weight:750;letter-spacing:-.01em}
 .bar > i{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .35s ease}
 .iconbtn{width:40px;height:40px;border-radius:12px;border:1px solid var(--line-strong);
   background:var(--card);font-size:17px;display:grid;place-items:center;color:var(--ink)}
+.iconbtn:disabled{opacity:.32}
+.iconbtn:active:not(:disabled){background:var(--paper)}
 
 /* ---- cards ---- */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
@@ -146,13 +148,6 @@ textarea.txt{resize:vertical;min-height:64px}
 .celebrate{background:linear-gradient(135deg,var(--accent),#F2811B);color:#fff;border:none}
 .celebrate .eyebrow,.celebrate .muted{color:rgba(255,255,255,.85)}
 .hidden{display:none!important}
-.phase-ready .ring circle.fg{stroke:var(--accent)}
-.phase-ready .t-sub{color:var(--accent-ink)}
-.pill.ready{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}
-.ov-row{display:flex;align-items:baseline;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:15px}
-.ov-row:last-child{border-bottom:none}
-.ov-row .oi{width:22px;flex:none;color:var(--muted);font-weight:800;font-size:13px}
-.ov-row .od{margin-left:auto;color:var(--muted);font-weight:700;font-size:13.5px;white-space:nowrap}
 a{color:var(--accent-ink)}
 ::selection{background:var(--accent-soft)}
 </style>
@@ -173,18 +168,17 @@ const SCHEMA = 1;
 const SAVE_KEY = "coachRunner.session.v1";
 const WD = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
 
-// Feste HF-Zonen (aus Coach §8) — für Anzeige + Zonen-Berechnung
-const HR_ZONES = [
-  {z:"Z1",lo:121,hi:134,name:"Erholung"},
-  {z:"Z2",lo:134,hi:148,name:"Grundlage / UT2"},
-  {z:"Z3",lo:148,hi:162,name:"Tempo / UT1"},
-  {z:"Z4",lo:162,hi:175,name:"Schwelle"},
-  {z:"Z5",lo:175,hi:189,name:"VO2max"},
-];
+// HF-Zonen kommen ausschließlich aus der Spec (optionales Feld spec.hrZones).
+// Format je Eintrag: { z:"Z2", lo:134, hi:148, name:"Grundlage / UT2" }
+// Fehlt das Feld, kennt die App keine Zonen — es bleiben nur die Ziel-Werte
+// des jeweiligen Cardio-Schritts (s.targetHr). Keine festen Werte in der App.
+function hrZones(){ return (S.spec && Array.isArray(S.spec.hrZones)) ? S.spec.hrZones : null; }
 function zoneForHr(hr){
-  if(!hr) return null;
-  for(const z of HR_ZONES){ if(hr>=z.lo && hr<z.hi) return z.z; }
-  return hr<121 ? "Z1" : "Z5";
+  const zones=hrZones();
+  if(!hr || !zones || !zones.length) return null;
+  for(const z of zones){ if(hr>=z.lo && hr<z.hi) return z.z; }
+  // außerhalb des Tabellenrands: tiefste bzw. höchste Zone
+  return hr < zones[0].lo ? zones[0].z : zones[zones.length-1].z;
 }
 
 /* ---------- global state ---------- */
@@ -211,49 +205,58 @@ function toast(msg){ toastEl.textContent=msg; toastEl.classList.add("show");
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function mmss(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60),s=sec%60; return m+":"+String(s).padStart(2,"0"); }
 
-/* ---------- audio (robust: bei jeder Geste + Sichtbarkeit entsperrt) ---------- */
-let AC=null, soundOn=true;
-try{ const sv=localStorage.getItem("coachRunner.sound"); if(sv!=null) soundOn=(sv!=="0"); }catch(e){}
+/* ---------- audio ----------
+   iOS suspendiert den AudioContext aggressiv (Screen-Lock, Hintergrund,
+   Stille). Deshalb: einmal per echtem Tap entsperren (inkl. Silent-Buffer),
+   bei JEDER Interaktion + bei Rückkehr in den Vordergrund reaktivieren und
+   vor jedem Ton einen resume()-Versuch starten. Töne werden als Sequenz
+   relativ zu AC.currentTime geplant (zuverlässiger als setTimeout-Ketten). */
+let AC=null, audioReady=false;
 function unlockAudio(){
   try{
     if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
-    if(AC.state==="suspended") AC.resume();
-    if(!AC._warmed){ // iOS: stummen Buffer abspielen, damit der Kontext wirklich „aufwacht“
-      const b=AC.createBuffer(1,1,22050), src=AC.createBufferSource();
-      src.buffer=b; src.connect(AC.destination); src.start(0); AC._warmed=true;
+    if(AC.state!=="running") AC.resume();
+    if(!audioReady){
+      const b=AC.createBuffer(1,1,22050), s=AC.createBufferSource();
+      s.buffer=b; s.connect(AC.destination); s.start(0);
+      audioReady=true;
     }
   }catch(e){}
 }
-// JEDE Nutzer-Interaktion hält den Audio-Kontext am Leben (iOS/PWA suspendieren ihn sonst)
-["pointerdown","touchstart","click","keydown"].forEach(ev=>
-  document.addEventListener(ev,()=>{ if(soundOn) unlockAudio(); },{passive:true}));
-function beep(freq=880,dur=0.14,vol=0.25){
-  if(!soundOn) return;
-  if(!AC){ unlockAudio(); }
+// jede Nutzer-Interaktion hält die Audio-Pipeline wach
+["touchstart","pointerdown","mousedown","keydown"].forEach(ev=>{
+  document.addEventListener(ev,unlockAudio,{passive:true});
+});
+function ensureAudio(){ try{ if(AC && AC.state!=="running") AC.resume(); }catch(e){} }
+// ein einzelner Ton, zeitversetzt planbar
+function tone(freq,startSec,dur,vol=0.22,type="sine"){
   if(!AC) return;
-  if(AC.state==="suspended"){ try{AC.resume();}catch(e){} }
   try{
+    const t0=AC.currentTime+startSec;
     const o=AC.createOscillator(), g=AC.createGain();
-    o.frequency.value=freq; o.type="sine";
-    g.gain.setValueAtTime(vol,AC.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
-    o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime+dur);
+    o.type=type; o.frequency.setValueAtTime(freq,t0);
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.exponentialRampToValueAtTime(vol,t0+0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(t0); o.stop(t0+dur+0.03);
   }catch(e){}
 }
-function cueWork(){ beep(880,.12); setTimeout(()=>beep(1100,.16),140); vibrate([60,40,90]); }
-function cueRest(){ beep(520,.18); vibrate(70); }
-function cueDone(){ beep(660,.12); setTimeout(()=>beep(880,.12),130); setTimeout(()=>beep(1320,.22),270); vibrate([80,50,80,50,140]); }
-function cueTick(){ beep(700,.07,.18); vibrate(30); }
-function cueSoft(){ beep(440,.20,.10); vibrate(40); }
-function cueSoftTick(){ beep(560,.07,.12); vibrate(20); } // sanfter Tick für Mobility
-function cueLead(){ beep(760,.09,.20); vibrate(35); }     // Countdown-Tick vor dem Start
+function beep(freq=880,dur=0.14,vol=0.25){ ensureAudio(); tone(freq,0,dur,vol); }
+// motivierende Cues
+function cueWork(){ ensureAudio(); tone(660,0,.12,.28); tone(880,.11,.12,.30); tone(1175,.22,.20,.34); vibrate([50,40,90]); }
+function cueRest(){ ensureAudio(); tone(620,0,.16,.20); tone(470,.13,.22,.17); vibrate(70); }
+function cueDone(){ ensureAudio(); tone(660,0,.11,.30); tone(880,.11,.11,.30); tone(1175,.22,.12,.32); tone(1568,.36,.28,.36); vibrate([80,50,80,50,160]); }
+function cueTick(){ ensureAudio(); tone(900,0,.07,.20); vibrate(30); }
+// 3-2-1: Tonhöhe steigt, bei 1 ein heller Akzent
+function cueCountdown(n){ ensureAudio(); tone(n===1?1320:760,0,.09,.24); vibrate(n===1?60:25); }
+function cueSoft(){ ensureAudio(); tone(440,0,.22,.10); tone(560,.10,.20,.09); vibrate(40); }
 function vibrate(p){ if(navigator.vibrate) try{navigator.vibrate(p);}catch(e){} }
-function toggleSound(){
-  soundOn=!soundOn;
-  try{ localStorage.setItem("coachRunner.sound",soundOn?"1":"0"); }catch(e){}
-  if(soundOn){ unlockAudio(); beep(880,.1); }
-  if(S.screen==="run") setTop(topbar());
-  toast(soundOn?"🔔 Ton-Guide an":"🔕 Ton-Guide aus");
+// fortlaufender 3-2-1-Countdown – ruft cueCountdown beim Überschreiten ganzer Sekunden
+let _cdLast=null;
+function countdownCue(rem){
+  const s=Math.ceil(rem);
+  if(s!==_cdLast){ _cdLast=s; if(s===3||s===2||s===1) cueCountdown(s); }
 }
 
 /* ---------- wake lock ---------- */
@@ -261,14 +264,14 @@ let wakeLock=null;
 async function keepAwake(){
   try{ if("wakeLock" in navigator){ wakeLock=await navigator.wakeLock.request("screen"); } }catch(e){}
 }
-document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"){ if(S.screen==="run") keepAwake(); if(soundOn) unlockAudio(); } });
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"){ unlockAudio(); if(S.screen==="run") keepAwake(); } });
 
 /* ---------- timer engine ---------- */
 const Timer = {
   raf:null, endsAt:0, dur:0, onTick:null, onDone:null, paused:false, remainAtPause:0,
   start(durSec,onTick,onDone){
     this.stop(); this.dur=durSec; this.endsAt=performance.now()+durSec*1000;
-    this.onTick=onTick; this.onDone=onDone; this.paused=false; this.loop();
+    this.onTick=onTick; this.onDone=onDone; this.paused=false; _cdLast=null; this.loop();
   },
   loop(){
     const step=()=>{
@@ -307,33 +310,6 @@ function ring(frac,sub,val){
       stroke-dasharray="${c}" stroke-dashoffset="${off}"/></svg>
     <div class="center"><div class="t-val tnum">${val}</div><div class="t-sub">${sub}</div></div></div>`;
 }
-
-/* ---------- Vorlaufzeit / Countdown vor jedem Timer ---------- */
-let LEAD_SEC=6;
-try{ const lv=parseInt(localStorage.getItem("coachRunner.lead"),10); if(lv===0||lv===3||lv===6||lv===10) LEAD_SEC=lv; }catch(e){}
-function getLead(){ return LEAD_SEC; }
-const Lead={active:false,onGo:null};
-function leadIn(seconds,label,onGo){
-  seconds=Math.round(seconds||0);
-  if(seconds<=0){ onGo(); return; }
-  Lead.active=true; Lead.onGo=onGo;
-  setRun(`<div class="phase-ready">
-    <div class="center" style="margin:6px 0"><span class="pill ready">Bereit machen</span></div>
-    <h1 class="center" style="margin:10px 0 0;font-size:22px">${esc(label||"Gleich geht's los")}</h1>
-    <div class="timer" id="leadWrap">${ring(1,"start in",String(seconds))}</div>
-    <p class="center muted" style="margin-top:6px">In Position gehen…</p>
-  </div>`);
-  setBar(`<button class="btn sec" onclick="leadSkip()">Sofort starten</button>`);
-  let last=seconds+1;
-  Timer.start(seconds,(rem,dur)=>{
-    const w=$("leadWrap"); if(w) w.innerHTML=ring(rem/dur,"start in",String(Math.ceil(rem)));
-    const c=Math.ceil(rem);
-    if(c!==last && c>=1 && c<=5){ last=c; cueLead(); }
-  },()=>{ leadFire(); });
-}
-function leadSkip(){ if(!Lead.active) return; Timer.stop(); leadFire(); }
-function leadFire(){ if(!Lead.active) return; Lead.active=false; const go=Lead.onGo; Lead.onGo=null; if(go) go(); }
-function secLabel(sec){ return sec>=60 ? mmss(sec) : (sec+"s"); }
 
 /* ============================================================
    JSON import / validation
@@ -440,30 +416,9 @@ function renderReady(){
         ${rd.sleep?`<span class="pill">😴 ${esc(rd.sleep)}</span>`:""}
         ${rd.soreness?`<span class="pill">💪 ${esc(rd.soreness)}</span>`:""}
       </div></div>`:""}
-    <div class="card"><div class="eyebrow" style="margin-bottom:6px">Ablauf</div>${rows}</div>
-    <div class="card">
-      <div class="eyebrow" style="margin-bottom:8px">Einstellungen</div>
-      <div class="field" style="margin:0 0 12px">
-        <div class="lab">Ton-Guide</div>
-        <div class="chips" id="soundChips">
-          <span class="chip ${soundOn?'on':''}" onclick="setSoundChip(true)">🔔 An</span>
-          <span class="chip ${!soundOn?'on':''}" onclick="setSoundChip(false)">🔕 Aus</span>
-        </div>
-      </div>
-      <div class="field" style="margin:0">
-        <div class="lab">Countdown vor jedem Timer</div>
-        <div class="chips" id="leadChips">
-          ${[3,6,10].map(n=>`<span class="chip ${LEAD_SEC==n?'on':''}" onclick="setLead(${n})">${n}s</span>`).join("")}
-          <span class="chip ${LEAD_SEC==0?'on':''}" onclick="setLead(0)">aus</span>
-        </div>
-      </div>
-    </div>`);
+    <div class="card"><div class="eyebrow" style="margin-bottom:6px">Ablauf</div>${rows}</div>`);
   setBar(`<button class="btn" onclick="startWorkout()">Los geht's</button>`);
 }
-function setSoundChip(v){ soundOn=v; try{localStorage.setItem("coachRunner.sound",v?"1":"0");}catch(e){}
-  if(v){ unlockAudio(); beep(880,.1); } renderReady(); }
-function setLead(n){ LEAD_SEC=n; try{localStorage.setItem("coachRunner.lead",String(n));}catch(e){}
-  document.querySelectorAll("#leadChips .chip").forEach(c=>c.classList.toggle("on",c.textContent===(n===0?"aus":n+"s"))); }
 function stepMetaShort(s){
   if(s.type==="strength")return `${s.sets}×${repText(s.repTarget)}`;
   if(s.type==="superset")return `${s.rounds} Runden`;
@@ -487,29 +442,86 @@ function topbar(){
   const frac=Math.min(1,(i)/tot);
   return `<div class="topbar">
     <button class="iconbtn" onclick="confirmQuit()">✕</button>
+    <button class="iconbtn" onclick="prevStep()" ${i===0?'disabled':''} aria-label="Zurück">‹</button>
     <div class="prog-wrap">
       <div class="prog-label"><span>Schritt ${i+1} / ${tot}</span><span>${esc(stepTitle(S.spec.steps[i]))}</span></div>
       <div class="bar"><i style="width:${frac*100}%"></i></div>
+    </div></div>`;
+}
+/* Index bewegen (ohne Render) – Logs in S.result bleiben erhalten,
+   nur der transiente Schritt-Fortschritt S.sub wird zurückgesetzt. */
+function advance(){
+  Timer.stop(); UpTimer.stop(); S.sub={};
+  if(S.stepIdx < S.spec.steps.length-1){ S.stepIdx++; saveProgress(); return true; }
+  return false;
+}
+function nextStep(){ if(advance()) renderTransition(); else finishWorkout(); }
+// für Skips: direkt zum nächsten Schritt, ohne Übergangs-Pause
+function skipToNext(){ if(advance()) renderStep(); else finishWorkout(); }
+// Zurück: ein Schritt zurück; bereits geloggte Sätze/Werte bleiben gespeichert
+function prevStep(){
+  Timer.stop(); UpTimer.stop(); S.sub={};
+  if(S.stepIdx>0){ S.stepIdx--; saveProgress(); renderStep(); }
+}
+
+/* ---- Übergang zwischen Blöcken: kurze Pause + Vorschau ---- */
+function transitionDetail(s){
+  if(s.type==="strength")return `${s.sets} Sätze × ${repText(s.repTarget)} Wdh${s.load?(" · "+esc(s.load.text||(s.load.kg+" kg"))):""}${s.rirTarget!=null?(" · RIR "+s.rirTarget):""}`;
+  if(s.type==="superset")return `${s.rounds} Runden · ${(s.exercises||[]).map(e=>esc(e.name)).join(" + ")}`;
+  if(s.type==="interval")return `${(s.scheme||"").toUpperCase()} · ${s.rounds}× ${s.workSec}s`;
+  if(s.type==="circuit")return `${s.rounds} Runden · ${(s.stations||[]).length} Stationen`;
+  if(s.type==="cardio")return `${s.durationMin} min · ${s.targetHr?("Ziel "+s.targetHr.zone):"Zone 2"}`;
+  if(s.type==="carry")return `${s.rounds} Runden${s.load?(" · "+esc(s.load.text||(s.load.kg+" kg"))):""}`;
+  if(s.type==="mobility")return `${(s.poses||[]).length} Posen · ruhig & atemgeführt`;
+  if(s.type==="plyo")return `${s.sets} Sätze × ${repText(s.repTarget)}${s.boxHeightCm?(" · Box "+s.boxHeightCm+" cm"):""}`;
+  if(s.type==="cooldown")return "Ausklang & durchatmen";
+  return stepMetaShort(s)||"";
+}
+function upcomingList(fromIdx){
+  return S.spec.steps.slice(fromIdx).map((s,k)=>`<div class="kv">
+      <span><span class="tag ${s.type==='cardio'||s.type==='mobility'?'row':''}">${esc(focusTag(s))}</span> &nbsp;${esc(stepTitle(s))}</span>
+      <b class="muted">${stepMetaShort(s)}</b></div>`).join("");
+}
+function renderTransition(){
+  const s=S.spec.steps[S.stepIdx];
+  const prev=S.stepIdx>0?S.spec.steps[S.stepIdx-1]:null;
+  const fromWarmup = prev && prev.type==="warmup";
+  const toCooldown = s.type==="cooldown";
+  const pauseSec = fromWarmup?15 : (toCooldown?12 : 25);
+  const label = fromWarmup ? "Warmup erledigt – los geht's 💪"
+              : toCooldown ? "Fast geschafft – Ausklang"
+              : "Kurze Pause – durchatmen";
+  setRun(`<div class="phase-rest" style="margin-top:6px">
+    <div class="center" style="margin:4px 0 0"><span class="pill rest">${label}</span></div>
+    <div class="timer" id="trWrap">${ring(1,"Pause",mmss(pauseSec))}</div>
+    <div class="card">
+      <div class="eyebrow" style="margin-bottom:6px">Als Nächstes</div>
+      <div style="font-weight:750;font-size:17px;margin-bottom:2px">${esc(stepTitle(s))}</div>
+      <div class="muted" style="font-size:14px">${transitionDetail(s)}</div>
     </div>
-    <button class="iconbtn" onclick="toggleSound()" aria-label="Ton">${soundOn?'🔔':'🔕'}</button></div>`;
+    ${fromWarmup?`<div class="card"><div class="eyebrow" style="margin-bottom:6px">Das kommt heute</div>${upcomingList(S.stepIdx)}</div>`:""}
+  </div>`);
+  setBar(`<div class="btn-row">
+    <button class="btn sec" style="flex:none;width:34%" onclick="Timer.add(30)">+30s</button>
+    <button class="btn" onclick="startCurrentStep()">${fromWarmup?"Starten":"Weiter"}</button>
+  </div>`);
+  cueRest();
+  Timer.start(pauseSec,(rem,dur)=>{ const w=$("trWrap"); if(w) w.innerHTML=ring(rem/dur,"Pause",mmss(rem)); countdownCue(rem); },
+    ()=>{ startCurrentStep(); });
 }
-function nextStep(){
-  Timer.stop(); UpTimer.stop();
-  S.sub={};
-  if(S.stepIdx < S.spec.steps.length-1){ S.stepIdx++; saveProgress(); renderStep(); }
-  else { finishWorkout(); }
-}
+function startCurrentStep(){ Timer.stop(); cueWork(); renderStep(); }
+
 function renderStep(){
   const s=S.spec.steps[S.stepIdx];
   saveProgress();
   const r={warmup:renderChecklist,cooldown:renderChecklist,strength:renderStrength,
     superset:renderSuperset,interval:renderInterval,circuit:renderCircuit,
     cardio:renderCardio,carry:renderCarry,mobility:renderMobility,plyo:renderPlyo}[s.type];
-  if(r) r(s); else { skipStep("Unbekannter Schritt-Typp: "+s.type); }
+  if(r) r(s); else { skipStep("Unbekannter Schritt-Typ: "+s.type); }
 }
 function skipStep(reason){
   const rs=S.result.steps[S.stepIdx]; rs.status="skipped"; rs.skipReason=reason||"übersprungen";
-  toast("Übersprungen"); nextStep();
+  toast("Übersprungen"); skipToNext();
 }
 
 /* ---- WARMUP / COOLDOWN (checklist) ---- */
@@ -630,7 +642,7 @@ function skipExercise(){
   const why=prompt("Übung überspringen — kurzer Grund (optional):")||"";
   rs.status="skipped"; rs.skipReason=why.trim()||"übersprungen";
   if(rs.log&&!rs.log.length) delete rs.log;
-  toast("Übung übersprungen"); nextStep();
+  toast("Übung übersprungen"); skipToNext();
 }
 
 /* ---- PLYO (Sprungkraft / Plyometrie) — Qualität & Explosivität statt Versagen, kein RIR ---- */
@@ -704,14 +716,13 @@ function startRest(sec){
     <button class="btn sec" style="flex:none;width:34%" onclick="Timer.add(30)">+30s</button>
     <button class="btn" onclick="Timer.stop();renderStep()">Pause überspringen</button>
   </div>`);
-  Timer.start(sec,(rem,dur)=>{ const w=$("restWrap"); if(w) w.innerHTML=ring(rem/dur,"Pause",mmss(rem)); if(Math.ceil(rem)===3)cueTick(); },
+  Timer.start(sec,(rem,dur)=>{ const w=$("restWrap"); if(w) w.innerHTML=ring(rem/dur,"Pause",mmss(rem)); countdownCue(rem); },
     ()=>{ cueWork(); renderStep(); });
 }
 
 /* ---- SUPERSET ---- */
 function renderSuperset(s){
   const rs=S.result.steps[S.stepIdx]; if(!rs.log)rs.log=[];
-  if(!S.sub.started && !rs.log.length){ return supersetIntro(s); }
   const exN=s.exercises.length, total=s.rounds*exN, done=rs.log.length;
   if(done>=total){ rs.status="done"; return supersetDone(s,rs); }
   const round=Math.floor(done/exN), exI=done%exN, ex=s.exercises[exI];
@@ -734,17 +745,6 @@ function renderSuperset(s){
   const isLastInRound = exI===exN-1;
   setBar(`<button class="btn" onclick="logSuperset(${isLastInRound})">${isLastInRound&&round+1<s.rounds?"Runde fertig → Pause":"Erledigt"}</button>`);
 }
-function supersetIntro(s){
-  const rows=(s.exercises||[]).map((ex,i)=>`<div class="ov-row"><span class="oi">${String.fromCharCode(65+i)}</span><span>${esc(ex.name)}</span><span class="od">${esc(repText(ex.repTarget))} Wdh${ex.load?(" · "+esc(ex.load.text||(ex.load.kg+" kg"))):""}</span></div>`).join("");
-  setRun(`
-    <div class="eyebrow">Schritt ${S.stepIdx+1} / ${S.spec.steps.length} · Übersicht</div>
-    <h1 style="margin:4px 0 4px">${esc(s.label||"Superset")}</h1>
-    <p class="muted" style="margin-bottom:14px">${s.rounds} Runden · ${(s.exercises||[]).map((_,i)=>String.fromCharCode(65+i)).join("→")}${s.restSec?(" · "+s.restSec+"s Pause/Runde"):""}</p>
-    <div class="card"><div class="eyebrow" style="margin-bottom:6px">Übungen (ohne Pause hintereinander)</div>${rows}</div>
-    ${s.lastTime?`<div class="note">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}`);
-  setBar(`<button class="btn" onclick="ssBegin()">Verstanden — los</button>`);
-}
-function ssBegin(){ S.sub.started=true; renderStep(); }
 function loadField2(ex){
   const bells=S.spec.availableBells; let chips="";
   if(Array.isArray(bells)&&bells.length) chips=`<div class="chips" style="margin-top:8px">${bells.map(b=>`<span class="chip ${S.sub.load==b?'on':''}" onclick="setVal('load',${b})">${b}</span>`).join("")}</div>`;
@@ -792,27 +792,8 @@ function buildPhases(s){
   return ph;
 }
 function renderInterval(s){
-  if(!S.sub.started){ return intervalIntro(s); }
   if(!S.sub.phases){ S.sub.phases=buildPhases(s); S.sub.pi=0; S.sub.running=false; }
   intervalShow(s);
-}
-function intervalIntro(s){
-  const rot=(s.rotation&&s.rotation.length)?s.rotation:[s.label||"Arbeit"];
-  const work=s.workSec||(s.scheme==="emom"?60:20);
-  const rows=rot.map((m,i)=>`<div class="ov-row"><span class="oi">${i+1}</span><span>${esc(m)}</span></div>`).join("");
-  setRun(`
-    <div class="eyebrow">Schritt ${S.stepIdx+1} / ${S.spec.steps.length} · Übersicht</div>
-    <h1 style="margin:4px 0 4px">${esc(stepTitle(s))}</h1>
-    <p class="muted" style="margin-bottom:14px">${esc(s.scheme.toUpperCase())} · ${s.rounds} Runden · ${work}s Arbeit${(s.restSec&&s.scheme!=="emom")?(" · "+s.restSec+"s Pause"):""}${s.repTargetPerRound?(" · Ziel "+esc(s.repTargetPerRound)+" Wdh/Runde"):""}${s.load?(" · "+esc(s.load.text||s.load)):""}</p>
-    <div class="card"><div class="eyebrow" style="margin-bottom:6px">Bewegungen${rot.length>1?" (rotieren)":""}</div>${rows}</div>
-    ${s.note?`<div class="note">${esc(s.note)}</div>`:""}`);
-  setBar(`<button class="btn" onclick="ivBegin()">Verstanden — Countdown</button>`);
-}
-function ivBegin(){
-  const s=S.spec.steps[S.stepIdx];
-  S.sub.started=true; S.sub.phases=buildPhases(s); S.sub.pi=0; S.sub.running=true;
-  const first=S.sub.phases[0];
-  leadIn(getLead(), first&&first.move?first.move:(s.label||"Arbeit"), ()=>runPhase());
 }
 function intervalShow(s){
   const ph=S.sub.phases, i=S.sub.pi, p=ph[i];
@@ -844,7 +825,7 @@ function runPhase(){
   intervalShow(s);
   if(p.kind==="work")cueWork(); else cueRest();
   Timer.start(p.sec,(rem,dur)=>{ const w=$("ivWrap"); if(w)w.innerHTML=ring(rem/dur,p.kind==='work'?"arbeit":"pause",mmss(rem));
-      if(Math.ceil(rem)===3)cueTick(); },
+      countdownCue(rem); },
     ()=>{ S.sub.pi++; if(S.sub.pi<ph.length){ runPhase(); } else { cueDone(); intervalLog(s); } });
 }
 function ivPause(){ if(Timer.paused){Timer.resume();}else{Timer.pause();} intervalShow(S.spec.steps[S.stepIdx]); }
@@ -889,31 +870,8 @@ function buildCircuit(s){
   return ph;
 }
 function renderCircuit(s){
-  if(!S.sub.started){ return circuitIntro(s); }
   if(!S.sub.phases){ S.sub.phases=buildCircuit(s); S.sub.pi=0; S.sub.running=false; }
   circuitShow(s);
-}
-function circuitIntro(s){
-  const rows=(s.stations||[]).map(st=>{
-    const meta = st.durationSec ? (secLabel(st.durationSec)+(st.perSide?" /Seite":""))
-               : ((st.reps!=null?st.reps+" Wdh":"")+(st.perSide?" /Seite":""));
-    return `<div class="ov-row"><span>${esc(st.name)}</span><span class="od">${esc(meta)}</span></div>`;
-  }).join("");
-  const ph=buildCircuit(s);
-  const est=Math.max(1,Math.round(ph.reduce((a,x)=>a+(x.timed?x.sec:8),0)/60));
-  setRun(`
-    <div class="eyebrow">Schritt ${S.stepIdx+1} / ${S.spec.steps.length} · Übersicht</div>
-    <h1 style="margin:4px 0 4px">${esc(stepTitle(s))}</h1>
-    <p class="muted" style="margin-bottom:14px">${s.rounds} Runden${s.restBetweenRoundsSec?(" · "+s.restBetweenRoundsSec+"s Rundenpause"):""} · ~${est} min</p>
-    <div class="card"><div class="eyebrow" style="margin-bottom:6px">Stationen (pro Runde)</div>${rows}</div>`);
-  setBar(`<button class="btn" onclick="ccBegin()">Verstanden — Countdown</button>`);
-}
-function ccBegin(){
-  const s=S.spec.steps[S.stepIdx];
-  S.sub.started=true; S.sub.phases=buildCircuit(s); S.sub.pi=0;
-  const first=S.sub.phases[0];
-  if(first && first.timed){ S.sub.running=true; leadIn(getLead(), first.name, ()=>ccRun()); }
-  else { S.sub.running=false; circuitShow(s); }
 }
 function circuitShow(s){
   const ph=S.sub.phases, p=ph[S.sub.pi];
@@ -940,7 +898,7 @@ function ccRun(){
   circuitShow(s);
   if(!p.timed) return;
   if(p.rest)cueRest(); else cueWork();
-  Timer.start(p.sec,(rem,dur)=>{ const w=$("ccWrap"); if(w)w.innerHTML=ring(rem/dur,p.rest?"pause":"halten",mmss(rem)); if(Math.ceil(rem)===3)cueTick(); },
+  Timer.start(p.sec,(rem,dur)=>{ const w=$("ccWrap"); if(w)w.innerHTML=ring(rem/dur,p.rest?"pause":"halten",mmss(rem)); countdownCue(rem); },
     ()=>{ ccAdvance(); });
 }
 function ccAdvance(){ S.sub.pi++; const s=S.spec.steps[S.stepIdx];
@@ -976,29 +934,8 @@ function buildMobility(s){
   return ph;
 }
 function renderMobility(s){
-  if(!S.sub.started){ return mobilityIntro(s); }
   if(!S.sub.phases){ S.sub.phases=buildMobility(s); S.sub.pi=0; S.sub.running=false; }
   mobilityShow(s);
-}
-function mobilityIntro(s){
-  const ph=buildMobility(s);
-  const est=Math.max(1,Math.round(ph.reduce((a,x)=>a+x.sec,0)/60));
-  const rows=(s.poses||[]).map(p=>{
-    const meta=secLabel(p.durationSec||60)+(p.perSide?" /Seite":"");
-    return `<div class="ov-row"><span>${esc(p.name)}</span><span class="od">${esc(meta)}</span></div>`;
-  }).join("");
-  setRun(`
-    <div class="eyebrow">Schritt ${S.stepIdx+1} / ${S.spec.steps.length} · Übersicht</div>
-    <h1 style="margin:4px 0 4px">${esc(s.label||"Mobility")}</h1>
-    <p class="muted" style="margin-bottom:14px">${(s.poses||[]).length} Posen${(s.rounds&&s.rounds>1)?(" · "+s.rounds+" Runden"):""} · ~${est} min · ruhig & atemgeführt</p>
-    <div class="card"><div class="eyebrow" style="margin-bottom:6px">Ablauf</div>${rows}</div>`);
-  setBar(`<button class="btn" onclick="moBegin()">Verstanden — Countdown</button>`);
-}
-function moBegin(){
-  const s=S.spec.steps[S.stepIdx];
-  S.sub.started=true; S.sub.phases=buildMobility(s); S.sub.pi=0; S.sub.running=true;
-  const first=S.sub.phases[0];
-  leadIn(getLead(), first?(first.name+(first.side?(" · "+first.side):"")):(s.label||"Mobility"), ()=>moRun());
 }
 function mobilityShow(s){
   const ph=S.sub.phases, i=S.sub.pi, p=ph[i];
@@ -1025,18 +962,53 @@ function mobilityShow(s){
   }
 }
 function moStart(){ S.sub.running=true; moRun(); }
+const MOB_PREP=6; // Sekunden zum Einnehmen der Pose
 function moRun(){
   const s=S.spec.steps[S.stepIdx], ph=S.sub.phases, p=ph[S.sub.pi];
   if(!p) return mobilityDone(s);
+  if(p.rest){ moHold(s,p); }      // reine Pause braucht keine Einnehm-Phase
+  else { moPrep(s,p); }
+}
+// kurze Vorbereitungs-Phase: Pose ankündigen + 3-2-1-Countdown, dann Hold
+function moPrepShow(s,p,sec){
+  const ph=S.sub.phases, i=S.sub.pi;
+  const totalPoses=ph.filter(x=>!x.rest).length;
+  const poseIdx=ph.slice(0,i+1).filter(x=>!x.rest).length;
+  setRun(`<div class="phase-rest">
+    <div class="center" style="margin:6px 0">
+      <span class="pill rest">Einnehmen · ${poseIdx} / ${totalPoses}</span>
+    </div>
+    <h1 class="center" style="margin:10px 0 0;font-size:23px">${esc(p.name)}${p.side?` <span class="muted" style="font-weight:600">· ${p.side}</span>`:""}</h1>
+    <div class="timer" id="moWrap">${ring(1,"bereitmachen",mmss(sec))}</div>
+    <div class="note center">${p.cue?esc(p.cue):"Position ruhig einnehmen, Atem fließen lassen."}</div>
+  </div>`);
+  setBar(`<div class="btn-row">
+    <button class="btn sec" style="flex:none;width:34%" onclick="moPause()">${Timer.paused?"Weiter":"Pause"}</button>
+    <button class="btn" onclick="moSkipPrep()">Jetzt halten</button></div>`);
+}
+function moPrep(s,p){
+  S.sub.inPrep=true;
+  moPrepShow(s,p,MOB_PREP);
+  Timer.start(MOB_PREP,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); countdownCue(rem); },
+    ()=>{ moHold(s,p); });
+}
+function moSkipPrep(){ Timer.stop(); const s=S.spec.steps[S.stepIdx]; moHold(s,S.sub.phases[S.sub.pi]); }
+// eigentlicher Hold (oder Pause-Phase)
+function moHold(s,p){
+  S.sub.inPrep=false;
   mobilityShow(s);
-  cueSoft(); S.sub._lastTick=null;
-  Timer.start(p.sec,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,p.rest?"pause":"halten",mmss(rem));
-      const c=Math.ceil(rem); if(c>=1 && c<=3 && c!==S.sub._lastTick){ S.sub._lastTick=c; cueSoftTick(); } },
+  cueSoft();
+  Timer.start(p.sec,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,p.rest?"pause":"halten",mmss(rem)); },
     ()=>{ moAdvance(); });
 }
 function moAdvance(){ S.sub.pi++; const s=S.spec.steps[S.stepIdx];
   if(S.sub.pi<S.sub.phases.length) moRun(); else { cueSoft(); mobilityDone(s); } }
-function moPause(){ if(Timer.paused)Timer.resume();else Timer.pause(); mobilityShow(S.spec.steps[S.stepIdx]); }
+function moPause(){
+  if(Timer.paused)Timer.resume();else Timer.pause();
+  const s=S.spec.steps[S.stepIdx];
+  if(S.sub.inPrep){ moPrepShow(s,S.sub.phases[S.sub.pi],Math.max(0,Timer.remainAtPause||MOB_PREP)); }
+  else { mobilityShow(s); }
+}
 function moSkip(){ Timer.stop(); moAdvance(); }
 function mobilityDone(s){
   Timer.stop(); const rs=S.result.steps[S.stepIdx]; rs.status="done"; rs.done=true;
@@ -1062,20 +1034,18 @@ function renderCardio(s){
         ${s.targetSpm?`<div class="kv"><span>Schlagzahl</span><b>${Array.isArray(s.targetSpm)?s.targetSpm.join("–"):s.targetSpm} spm</b></div>`:""}
       </div>
       ${s.note?`<div class="note">${esc(s.note)}</div>`:""}
-      <div class="card"><div class="eyebrow" style="margin-bottom:8px">HF-Zonen</div>
-        ${HR_ZONES.map(zz=>`<div class="kv" style="font-size:13.5px"><span>${zz.z} · ${zz.name}</span><b class="muted">${zz.lo}–${zz.hi}</b></div>`).join("")}</div>`);
+      ${hrZones()?`<div class="card"><div class="eyebrow" style="margin-bottom:8px">HF-Zonen</div>
+        ${hrZones().map(zz=>`<div class="kv" style="font-size:13.5px"><span>${esc(zz.z)} · ${esc(zz.name||"")}</span><b class="muted">${zz.lo}–${zz.hi}</b></div>`).join("")}</div>`:""}`);
     setBar(`<button class="btn" onclick="cardioGo(${targetSec})">Timer starten</button>`);
     return;
   }
   cardioRunning(s,targetSec,isBike);
 }
 function cardioGo(targetSec){ S.sub.cardioStarted=true; S.sub.targetCued=false; const s=S.spec.steps[S.stepIdx];
-  leadIn(getLead(), ({row:"Rudern",run:"Laufen",bike:"Bike"})[s.modality]||"Los geht's", ()=>{
-    cardioRunning(s,targetSec,s.modality==="bike"); cueWork();
-    UpTimer.start((e)=>{ const w=$("upWrap"); if(!w)return;
-      const frac=Math.min(1,e/targetSec); w.innerHTML=ring(frac,"verstrichen",mmss(e));
-      if(!S.sub.targetCued && e>=targetSec){ S.sub.targetCued=true; cueDone(); toast("Zielzeit erreicht 🎉"); } });
-  }); }
+  cardioRunning(s,targetSec,s.modality==="bike"); cueWork();
+  UpTimer.start((e)=>{ const w=$("upWrap"); if(!w)return;
+    const frac=Math.min(1,e/targetSec); w.innerHTML=ring(frac,"verstrichen",mmss(e));
+    if(!S.sub.targetCued && e>=targetSec){ S.sub.targetCued=true; cueDone(); toast("Zielzeit erreicht 🎉"); } }); }
 function cardioRunning(s,targetSec,isBike){
   const z=s.targetHr, e=UpTimer.elapsed?UpTimer.elapsed():0;
   const frac=Math.min(1,e/targetSec);
@@ -1114,8 +1084,18 @@ function cardioFinish(){
 }
 function pickColor(el,c){ document.querySelectorAll("#cColor .chip").forEach(x=>x.classList.remove("on")); el.classList.add("on"); S.sub.color=c; }
 function showZone(){ const hr=Number($("cHr").value); const out=$("zoneOut"); if(!out)return;
-  if(!hr){out.innerHTML="";return;} const z=zoneForHr(hr); const info=HR_ZONES.find(x=>x.z===z);
-  const inZ2 = z==="Z2"; out.innerHTML=`<span class="pill ${inZ2?'z2':''}">${z} · ${info?info.name:""}</span> ${inZ2?'<span class="muted" style="font-size:13px">— Grundlage getroffen 👌</span>':''}`; }
+  if(!hr){ out.innerHTML=""; return; }
+  const s=S.spec.steps[S.stepIdx], t=s.targetHr;
+  const inTarget = t && t.min!=null && t.max!=null && hr>=t.min && hr<=t.max;
+  const z=zoneForHr(hr), info=z?(hrZones().find(x=>x.z===z)):null;
+  const label = info ? `${esc(z)} · ${esc(info.name||"")}` : (t&&t.zone?esc(t.zone):`${hr} bpm`);
+  let hint="";
+  if(t && t.min!=null && t.max!=null){
+    hint = inTarget ? '<span class="muted" style="font-size:13px">— Zielbereich getroffen 👌</span>'
+        : (hr<t.min ? '<span class="muted" style="font-size:13px">— unter Ziel</span>'
+                    : '<span class="muted" style="font-size:13px">— über Ziel</span>');
+  }
+  out.innerHTML=`<span class="pill ${inTarget?'z2':''}">${label}</span> ${hint}`; }
 function saveCardio(){
   const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
   const v=id=>{const e=$(id);return e&&e.value.trim()?e.value.trim():undefined;};
@@ -1130,7 +1110,7 @@ function saveCardio(){
     pace:v("cPace"),
     avgWatt:v("cWatt")?Number(v("cWatt")):undefined, colorZone:S.sub.color,
     rpm:v("cRpm")?Number(v("cRpm")):undefined,
-    avgHr:hr?Number(hr):undefined, zone:hr?zoneForHr(Number(hr)):undefined,
+    avgHr:hr?Number(hr):undefined, zone:hr?(zoneForHr(Number(hr))||undefined):undefined,
     note:v("exNote")
   };
   rs.status="done";
@@ -1154,7 +1134,7 @@ function renderCarry(s){
   if(timed) setBar(`<button class="btn" onclick="carryGo(${s.durationSec})">Starten</button>`);
   else setBar(`<button class="btn" onclick="carryLog()">Runde fertig</button>`);
 }
-function carryGo(sec){ leadIn(getLead(),"Carry",()=>{ cueWork(); Timer.start(sec,(rem,dur)=>{const w=$("carryWrap");if(w)w.innerHTML=ring(rem/dur,"carry",mmss(rem));if(Math.ceil(rem)===3)cueTick();},()=>{cueDone();carryLog();}); }); }
+function carryGo(sec){ cueWork(); Timer.start(sec,(rem,dur)=>{const w=$("carryWrap");if(w)w.innerHTML=ring(rem/dur,"carry",mmss(rem));countdownCue(rem);},()=>{cueDone();carryLog();}); }
 function carryLog(){ const rs=S.result.steps[S.stepIdx]; rs.log.push({done:true}); renderStep(); }
 
 /* ============================================================
@@ -1247,7 +1227,6 @@ function downloadResult(){
    QUIT / shorten
    ============================================================ */
 function confirmQuit(){
-  Timer.stop(); UpTimer.stop(); Lead.active=false; S.sub.running=false;
   setRun(`<div style="padding-top:20px">
     <h1 style="margin-bottom:8px">Session beenden?</h1>
     <p class="muted" style="margin-bottom:18px">Eine verkürzte Session zählt trotzdem — Konsistenz schlägt Perfektion.</p>
@@ -1286,8 +1265,37 @@ function restartAll(){ clearSaved(); S={screen:"import",spec:null,result:null,st
    layout helper — wrap scroll content height
    ============================================================ */
 
+/* ============================================================
+   URL-Loader — Workout über #w=<percent-encoded JSON> laden
+   Payload liegt im Fragment (hinter #) und wird nie an einen Server
+   geschickt. Greift der Link, springt die App direkt zur Übersicht.
+   ============================================================ */
+function loadFromHash(){
+  let frag = location.hash || "";
+  if(frag.charAt(0)==="#") frag=frag.slice(1);
+  if(!/^w=/.test(frag)) return false;
+  let payload=frag.slice(2);
+  let o=null;
+  try{ o=JSON.parse(decodeURIComponent(payload)); }
+  catch(e){ try{ o=JSON.parse(payload); }catch(e2){ o=extractJSON(decodeURIComponent(payload)); } }
+  const errs=validateSpec(o);
+  if(errs.length){
+    // Hash defekt — Fragment entfernen und normalen Import zeigen
+    try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){}
+    return false;
+  }
+  S.spec=o;
+  S.result=JSON.parse(JSON.stringify(o));
+  S.result.kind="workout-result";
+  S.stepIdx=0; S.sub={}; S.startedAt=null;
+  // Fragment entfernen, damit ein Reload das Workout nicht erneut lädt
+  try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){}
+  renderReady();
+  return true;
+}
+
 /* ---------- boot ---------- */
-renderImport();
+if(!loadFromHash()) renderImport();
 </script>
 </body>
 </html>
