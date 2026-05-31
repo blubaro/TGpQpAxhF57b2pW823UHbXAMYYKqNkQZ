@@ -228,50 +228,77 @@ function unlockAudio(){
   document.addEventListener(ev,unlockAudio,{passive:true});
 });
 function ensureAudio(){ try{ if(AC && AC.state!=="running") AC.resume(); }catch(e){} }
-// ein einzelner Ton, zeitversetzt planbar
-function tone(freq,startSec,dur,vol=0.22,type="sine"){
-  if(!AC) return;
-  try{
-    const t0=AC.currentTime+startSec;
-    const o=AC.createOscillator(), g=AC.createGain();
-    o.type=type; o.frequency.setValueAtTime(freq,t0);
-    g.gain.setValueAtTime(0.0001,t0);
-    g.gain.exponentialRampToValueAtTime(vol,t0+0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
-    o.connect(g); g.connect(AC.destination);
-    o.start(t0); o.stop(t0+dur+0.03);
-  }catch(e){}
+// einen Oszillator-Ton zu absoluter Audio-Zeit t0 planen und zurückgeben
+function _osc(freq,t0,dur,vol,type){
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.type=type||"sine"; o.frequency.setValueAtTime(freq,t0);
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(vol,t0+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+  o.connect(g); g.connect(AC.destination);
+  o.start(t0); o.stop(t0+dur+0.03);
+  return o;
 }
-function beep(freq=880,dur=0.14,vol=0.25){ ensureAudio(); tone(freq,0,dur,vol); }
-// motivierende Cues
+// sofortiger Ton — für Start-Cues, während die App im Vordergrund ist
+function tone(freq,startSec,dur,vol=0.22,type="sine"){
+  if(!AC) return; try{ _osc(freq,AC.currentTime+startSec,dur,vol,type); }catch(e){}
+}
+// motivierende Cues (Beginn einer Phase)
 function cueWork(){ ensureAudio(); tone(660,0,.12,.28); tone(880,.11,.12,.30); tone(1175,.22,.20,.34); vibrate([50,40,90]); }
 function cueRest(){ ensureAudio(); tone(620,0,.16,.20); tone(470,.13,.22,.17); vibrate(70); }
 function cueDone(){ ensureAudio(); tone(660,0,.11,.30); tone(880,.11,.11,.30); tone(1175,.22,.12,.32); tone(1568,.36,.28,.36); vibrate([80,50,80,50,160]); }
-function cueTick(){ ensureAudio(); tone(900,0,.07,.20); vibrate(30); }
-// 3-2-1: Tonhöhe steigt, bei 1 ein heller Akzent
-function cueCountdown(n){ ensureAudio(); tone(n===1?1320:760,0,.09,.24); vibrate(n===1?60:25); }
 function cueSoft(){ ensureAudio(); tone(440,0,.22,.10); tone(560,.10,.20,.09); vibrate(40); }
 function vibrate(p){ if(navigator.vibrate) try{navigator.vibrate(p);}catch(e){} }
-// fortlaufender 3-2-1-Countdown – ruft cueCountdown beim Überschreiten ganzer Sekunden
-let _cdLast=null;
-function countdownCue(rem){
-  const s=Math.ceil(rem);
-  if(s!==_cdLast){ _cdLast=s; if(s===3||s===2||s===1) cueCountdown(s); }
+
+/* ---------- vorab geplanter End-Alarm ----------
+   Der Ton, der das Ende eines Blocks signalisiert, wird NICHT erst im
+   onDone (requestAnimationFrame) erzeugt, sondern beim Timer-Start fest
+   auf die Audio-Uhr gelegt. Dadurch klingelt es zuverlässig am Ende —
+   auch wenn iOS rAF im Hintergrund/bei langer Laufzeit drosselt oder der
+   Tab nicht aktiv ist (Voraussetzung: Bildschirm bleibt per Wake-Lock an,
+   damit der AudioContext nicht suspendiert wird). Die geplanten Töne sind
+   kündbar: Pause / Skip / +30s planen sie neu. */
+let _sched=[];
+function clearScheduled(){ _sched.forEach(o=>{ try{o.stop(0);}catch(e){} try{o.disconnect();}catch(e){} }); _sched=[]; }
+function schedTone(freq,atSec,dur,vol,type){
+  if(!AC) return; try{ _sched.push(_osc(freq,AC.currentTime+Math.max(0,atSec),dur,vol,type)); }catch(e){}
+}
+const ALARM={
+  go:  [[660,0,.12,.30],[880,.12,.12,.30],[1175,.24,.20,.34]],
+  rest:[[620,0,.16,.20],[470,.13,.22,.17]],
+  done:[[660,0,.11,.30],[880,.12,.11,.30],[1175,.24,.12,.32],[1568,.40,.30,.36]],
+  soft:[[440,0,.22,.10],[560,.10,.20,.09]],
+};
+// kind: "go" | "rest" | "done" | "soft" — Ton ans Ende eines durSec-Timers legen
+function scheduleAlarm(kind,durSec){
+  clearScheduled(); ensureAudio();
+  if(!AC || !(durSec>0)) return;
+  // 3-2-1-Countdown kurz vor Schluss (steigende Tonhöhe) — bei "soft" (Mobility) bewusst ohne, damit Holds ruhig bleiben
+  if(kind!=="soft") [3,2,1].forEach(n=>{ if(durSec>n+0.25) schedTone(n===1?1320:760, durSec-n, .09, .22); });
+  (ALARM[kind]||ALARM.go).forEach(([f,off,d,v])=>schedTone(f, durSec+off, d, v));
 }
 
 /* ---------- wake lock ---------- */
 let wakeLock=null;
 async function keepAwake(){
-  try{ if("wakeLock" in navigator){ wakeLock=await navigator.wakeLock.request("screen"); } }catch(e){}
+  try{
+    if(!("wakeLock" in navigator)) return;
+    if(wakeLock && !wakeLock.released) return;            // bereits aktiv
+    wakeLock=await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release",()=>{ wakeLock=null; });
+  }catch(e){}
 }
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"){ unlockAudio(); if(S.screen==="run") keepAwake(); } });
 
 /* ---------- timer engine ---------- */
 const Timer = {
-  raf:null, endsAt:0, dur:0, onTick:null, onDone:null, paused:false, remainAtPause:0,
-  start(durSec,onTick,onDone){
+  raf:null, endsAt:0, dur:0, onTick:null, onDone:null, paused:false, remainAtPause:0, endKind:null,
+  start(durSec,onTick,onDone,endKind){
     this.stop(); this.dur=durSec; this.endsAt=performance.now()+durSec*1000;
-    this.onTick=onTick; this.onDone=onDone; this.paused=false; _cdLast=null; this.loop();
+    this.onTick=onTick; this.onDone=onDone; this.paused=false; this.endKind=endKind||null;
+    if(this.endKind) scheduleAlarm(this.endKind,durSec);   // End-Ton vorab auf die Audio-Uhr legen
+    keepAwake();                                           // Bildschirm während des Timers wach halten
+    this.loop();
   },
   loop(){
     const step=()=>{
@@ -283,10 +310,10 @@ const Timer = {
     };
     this.raf=requestAnimationFrame(step);
   },
-  pause(){ if(this.paused||!this.dur)return; this.paused=true; this.remainAtPause=(this.endsAt-performance.now())/1000; cancelAnimationFrame(this.raf); },
-  resume(){ if(!this.paused)return; this.paused=false; this.endsAt=performance.now()+this.remainAtPause*1000; this.loop(); },
-  add(sec){ this.endsAt+=sec*1000; },
-  stop(){ cancelAnimationFrame(this.raf); this.raf=null; this.dur=0; this.paused=false; },
+  pause(){ if(this.paused||!this.dur)return; this.paused=true; this.remainAtPause=(this.endsAt-performance.now())/1000; cancelAnimationFrame(this.raf); clearScheduled(); },
+  resume(){ if(!this.paused)return; this.paused=false; this.endsAt=performance.now()+this.remainAtPause*1000; if(this.endKind) scheduleAlarm(this.endKind,this.remainAtPause); this.loop(); },
+  add(sec){ this.endsAt+=sec*1000; if(this.endKind) scheduleAlarm(this.endKind,(this.endsAt-performance.now())/1000); },
+  stop(){ cancelAnimationFrame(this.raf); this.raf=null; this.dur=0; this.paused=false; this.endKind=null; clearScheduled(); },
 };
 // count-up (cardio)
 const UpTimer = {
@@ -298,7 +325,7 @@ const UpTimer = {
   pause(){ if(this.paused)return; this.paused=true; this.acc+=(performance.now()-this.startAt)/1000; cancelAnimationFrame(this.raf); },
   resume(){ if(!this.paused)return; this.paused=false; this.startAt=performance.now(); this.loop(); },
   elapsed(){ return this.paused?this.acc:this.acc+(performance.now()-this.startAt)/1000; },
-  stop(){ cancelAnimationFrame(this.raf); this.raf=null; this.paused=false; this.acc=0; },
+  stop(){ cancelAnimationFrame(this.raf); this.raf=null; this.paused=false; this.acc=0; clearScheduled(); },
 };
 
 /* ---------- progress ring svg ---------- */
@@ -506,9 +533,10 @@ function renderTransition(){
     <button class="btn" onclick="startCurrentStep()">${fromWarmup?"Starten":"Weiter"}</button>
   </div>`);
   cueRest();
-  Timer.start(pauseSec,(rem,dur)=>{ const w=$("trWrap"); if(w) w.innerHTML=ring(rem/dur,"Pause",mmss(rem)); countdownCue(rem); },
-    ()=>{ startCurrentStep(); });
+  Timer.start(pauseSec,(rem,dur)=>{ const w=$("trWrap"); if(w) w.innerHTML=ring(rem/dur,"Pause",mmss(rem)); },
+    ()=>{ Timer.stop(); renderStep(); }, "go");
 }
+// manueller Tap auf „Starten/Weiter" — Start-Ton sofort (Vordergrund)
 function startCurrentStep(){ Timer.stop(); cueWork(); renderStep(); }
 
 function renderStep(){
@@ -547,7 +575,7 @@ function toggleChecklistTimer(total){
   const btn=$("cdBtn");
   if(!cdRunning){ cdRunning=true; btn.textContent="Pause";
     Timer.start(total,(rem)=>{ const el=$("cdTimer"); if(el)el.innerHTML=`<div class="big-num" style="font-size:40px">${mmss(rem)}</div>`; },
-      ()=>{ cdRunning=false; cueDone(); const el=$("cdTimer"); if(el)el.innerHTML=`<div class="big-num" style="font-size:40px;color:var(--good)">fertig</div>`; if(btn)btn.textContent="Timer starten"; });
+      ()=>{ cdRunning=false; const el=$("cdTimer"); if(el)el.innerHTML=`<div class="big-num" style="font-size:40px;color:var(--good)">fertig</div>`; if(btn)btn.textContent="Timer starten"; }, "done");
   } else { if(Timer.paused){Timer.resume();btn.textContent="Pause";} else {Timer.pause();btn.textContent="Weiter";} }
 }
 function toggleCheck(i){ S.sub.checked[i]=!S.sub.checked[i]; renderStep(); }
@@ -716,8 +744,8 @@ function startRest(sec){
     <button class="btn sec" style="flex:none;width:34%" onclick="Timer.add(30)">+30s</button>
     <button class="btn" onclick="Timer.stop();renderStep()">Pause überspringen</button>
   </div>`);
-  Timer.start(sec,(rem,dur)=>{ const w=$("restWrap"); if(w) w.innerHTML=ring(rem/dur,"Pause",mmss(rem)); countdownCue(rem); },
-    ()=>{ cueWork(); renderStep(); });
+  Timer.start(sec,(rem,dur)=>{ const w=$("restWrap"); if(w) w.innerHTML=ring(rem/dur,"Pause",mmss(rem)); },
+    ()=>{ renderStep(); }, "go");
 }
 
 /* ---- SUPERSET ---- */
@@ -818,15 +846,15 @@ function intervalShow(s){
       <button class="btn" onclick="ivSkip()">Phase überspringen</button></div>`);
   }
 }
-function ivStart(){ S.sub.running=true; runPhase(); }
+function ivStart(){ S.sub.running=true; const p=S.sub.phases[S.sub.pi]; if(p)(p.kind==="work"?cueWork():cueRest()); runPhase(); }
 function runPhase(){
   const s=S.spec.steps[S.stepIdx], ph=S.sub.phases, p=ph[S.sub.pi];
   if(!p) return intervalLog(s);
   intervalShow(s);
-  if(p.kind==="work")cueWork(); else cueRest();
-  Timer.start(p.sec,(rem,dur)=>{ const w=$("ivWrap"); if(w)w.innerHTML=ring(rem/dur,p.kind==='work'?"arbeit":"pause",mmss(rem));
-      countdownCue(rem); },
-    ()=>{ S.sub.pi++; if(S.sub.pi<ph.length){ runPhase(); } else { cueDone(); intervalLog(s); } });
+  const nxt=ph[S.sub.pi+1];
+  const endKind = nxt ? (nxt.kind==="work"?"go":"rest") : "done";
+  Timer.start(p.sec,(rem,dur)=>{ const w=$("ivWrap"); if(w)w.innerHTML=ring(rem/dur,p.kind==='work'?"arbeit":"pause",mmss(rem)); },
+    ()=>{ S.sub.pi++; if(S.sub.pi<ph.length){ runPhase(); } else { intervalLog(s); } }, endKind);
 }
 function ivPause(){ if(Timer.paused){Timer.resume();}else{Timer.pause();} intervalShow(S.spec.steps[S.stepIdx]); }
 function ivSkip(){ Timer.stop(); S.sub.pi++; const s=S.spec.steps[S.stepIdx];
@@ -852,15 +880,19 @@ function saveInterval(rounds){
 }
 
 /* ---- CIRCUIT (core finisher) ---- */
+// Halt vs. dynamisch wird allein über das optionale Spec-Feld st.hold gesteuert:
+//   kein hold (oder false) → dynamische Station, kein Halt-Label
+//   hold:true              → statischer Halt, Ring zeigt "HALTEN"
 function buildCircuit(s){
   const ph=[];
   for(let r=0;r<s.rounds;r++){
     s.stations.forEach((st)=>{
       if(st.perSide && st.durationSec){
-        ph.push({timed:true,sec:st.durationSec,name:st.name+" (links)",round:r});
-        ph.push({timed:true,sec:st.durationSec,name:st.name+" (rechts)",round:r});
+        const hold=!!st.hold;
+        ph.push({timed:true,sec:st.durationSec,name:st.name+" (links)",hold,round:r});
+        ph.push({timed:true,sec:st.durationSec,name:st.name+" (rechts)",hold,round:r});
       } else if(st.durationSec){
-        ph.push({timed:true,sec:st.durationSec,name:st.name,round:r});
+        ph.push({timed:true,sec:st.durationSec,name:st.name,hold:!!st.hold,round:r});
       } else {
         ph.push({timed:false,reps:st.reps,name:st.name+(st.perSide?" (pro Seite)":""),round:r,load:st.load});
       }
@@ -880,7 +912,7 @@ function circuitShow(s){
   setRun(`<div class="${cls}">
     <div class="center" style="margin:6px 0"><span class="pill ${p.rest?'rest':'work'}">${esc(s.label||"Core")} · Runde ${p.round+1}/${s.rounds}</span></div>
     <h1 class="center" style="margin:8px 0 0;font-size:23px">${esc(p.name)}</h1>
-    ${p.timed?`<div class="timer" id="ccWrap">${ring(1,p.rest?"pause":"halten",mmss(p.sec))}</div>`
+    ${p.timed?`<div class="timer" id="ccWrap">${ring(1,p.rest?"pause":(p.hold?"halten":""),mmss(p.sec))}</div>`
       :`<div class="center" style="padding:34px 0"><div class="big-num" style="font-size:64px;color:var(--accent)">${esc(p.reps||"")}</div><div class="t-sub" style="color:var(--muted)">Wiederholungen${p.load?(" · "+esc(p.load.text||p.load)):""}</div></div>`}
   </div>`);
   if(p.timed){
@@ -891,21 +923,22 @@ function circuitShow(s){
     setBar(`<button class="btn" onclick="ccNextManual()">Station fertig</button>`);
   }
 }
-function ccStart(){ S.sub.running=true; ccRun(); }
+function ccStart(){ S.sub.running=true; const p=S.sub.phases[S.sub.pi]; if(p&&p.timed)(p.rest?cueRest():cueWork()); ccRun(); }
 function ccRun(){
   const s=S.spec.steps[S.stepIdx], ph=S.sub.phases, p=ph[S.sub.pi];
   if(!p) return circuitDone(s);
   circuitShow(s);
   if(!p.timed) return;
-  if(p.rest)cueRest(); else cueWork();
-  Timer.start(p.sec,(rem,dur)=>{ const w=$("ccWrap"); if(w)w.innerHTML=ring(rem/dur,p.rest?"pause":"halten",mmss(rem)); countdownCue(rem); },
-    ()=>{ ccAdvance(); });
+  const nxt=ph[S.sub.pi+1];
+  const endKind = nxt ? (nxt.rest?"rest":"go") : "done";
+  Timer.start(p.sec,(rem,dur)=>{ const w=$("ccWrap"); if(w)w.innerHTML=ring(rem/dur,p.rest?"pause":(p.hold?"halten":""),mmss(rem)); },
+    ()=>{ ccAdvance(); }, endKind);
 }
 function ccAdvance(){ S.sub.pi++; const s=S.spec.steps[S.stepIdx];
   if(S.sub.pi<S.sub.phases.length){ const np=S.sub.phases[S.sub.pi]; if(np.timed) ccRun(); else { S.sub.running=false; circuitShow(s);} }
-  else { cueDone(); circuitDone(s); } }
+  else { circuitDone(s); } }
 function ccNextManual(){ S.sub.pi++; const s=S.spec.steps[S.stepIdx];
-  if(S.sub.pi<S.sub.phases.length){ const np=S.sub.phases[S.sub.pi]; if(np.timed){S.sub.running=true;ccRun();}else circuitShow(s); }
+  if(S.sub.pi<S.sub.phases.length){ const np=S.sub.phases[S.sub.pi]; if(np.timed){S.sub.running=true; (np.rest?cueRest():cueWork()); ccRun();}else circuitShow(s); }
   else { cueDone(); circuitDone(s); } }
 function ccPause(){ if(Timer.paused)Timer.resume();else Timer.pause(); circuitShow(S.spec.steps[S.stepIdx]); }
 function ccSkip(){ Timer.stop(); ccAdvance(); }
@@ -989,20 +1022,19 @@ function moPrepShow(s,p,sec){
 function moPrep(s,p){
   S.sub.inPrep=true;
   moPrepShow(s,p,MOB_PREP);
-  Timer.start(MOB_PREP,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); countdownCue(rem); },
-    ()=>{ moHold(s,p); });
+  Timer.start(MOB_PREP,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
+    ()=>{ moHold(s,p); }, "go");
 }
 function moSkipPrep(){ Timer.stop(); const s=S.spec.steps[S.stepIdx]; moHold(s,S.sub.phases[S.sub.pi]); }
 // eigentlicher Hold (oder Pause-Phase)
 function moHold(s,p){
   S.sub.inPrep=false;
   mobilityShow(s);
-  cueSoft();
   Timer.start(p.sec,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,p.rest?"pause":"halten",mmss(rem)); },
-    ()=>{ moAdvance(); });
+    ()=>{ moAdvance(); }, "soft");
 }
 function moAdvance(){ S.sub.pi++; const s=S.spec.steps[S.stepIdx];
-  if(S.sub.pi<S.sub.phases.length) moRun(); else { cueSoft(); mobilityDone(s); } }
+  if(S.sub.pi<S.sub.phases.length) moRun(); else mobilityDone(s); }
 function moPause(){
   if(Timer.paused)Timer.resume();else Timer.pause();
   const s=S.spec.steps[S.stepIdx];
@@ -1042,10 +1074,10 @@ function renderCardio(s){
   cardioRunning(s,targetSec,isBike);
 }
 function cardioGo(targetSec){ S.sub.cardioStarted=true; S.sub.targetCued=false; const s=S.spec.steps[S.stepIdx];
-  cardioRunning(s,targetSec,s.modality==="bike"); cueWork();
+  cardioRunning(s,targetSec,s.modality==="bike"); cueWork(); keepAwake(); scheduleAlarm("done",targetSec);
   UpTimer.start((e)=>{ const w=$("upWrap"); if(!w)return;
     const frac=Math.min(1,e/targetSec); w.innerHTML=ring(frac,"verstrichen",mmss(e));
-    if(!S.sub.targetCued && e>=targetSec){ S.sub.targetCued=true; cueDone(); toast("Zielzeit erreicht 🎉"); } }); }
+    if(!S.sub.targetCued && e>=targetSec){ S.sub.targetCued=true; toast("Zielzeit erreicht 🎉"); } }); }
 function cardioRunning(s,targetSec,isBike){
   const z=s.targetHr, e=UpTimer.elapsed?UpTimer.elapsed():0;
   const frac=Math.min(1,e/targetSec);
@@ -1058,7 +1090,12 @@ function cardioRunning(s,targetSec,isBike){
     <button class="btn sec" style="flex:none;width:34%" onclick="cardioPause()">${UpTimer.paused?"Weiter":"Pause"}</button>
     <button class="btn" onclick="cardioFinish()">Fertig → eintragen</button></div>`);
 }
-function cardioPause(){ if(UpTimer.paused)UpTimer.resume();else UpTimer.pause(); cardioRunning(S.spec.steps[S.stepIdx],(S.spec.steps[S.stepIdx].durationMin||30)*60,S.spec.steps[S.stepIdx].modality==="bike"); }
+function cardioPause(){
+  const s=S.spec.steps[S.stepIdx], targetSec=(s.durationMin||30)*60;
+  if(UpTimer.paused){ UpTimer.resume(); if(!S.sub.targetCued){ const rem=targetSec-UpTimer.elapsed(); if(rem>0) scheduleAlarm("done",rem); } }
+  else { UpTimer.pause(); clearScheduled(); }
+  cardioRunning(s,targetSec,s.modality==="bike");
+}
 function cardioFinish(){
   const s=S.spec.steps[S.stepIdx]; const elapsed=Math.round(UpTimer.elapsed()); UpTimer.stop();
   const isBike=s.modality==="bike", isRow=s.modality==="row", isRun=s.modality==="run";
@@ -1134,7 +1171,7 @@ function renderCarry(s){
   if(timed) setBar(`<button class="btn" onclick="carryGo(${s.durationSec})">Starten</button>`);
   else setBar(`<button class="btn" onclick="carryLog()">Runde fertig</button>`);
 }
-function carryGo(sec){ cueWork(); Timer.start(sec,(rem,dur)=>{const w=$("carryWrap");if(w)w.innerHTML=ring(rem/dur,"carry",mmss(rem));countdownCue(rem);},()=>{cueDone();carryLog();}); }
+function carryGo(sec){ cueWork(); Timer.start(sec,(rem,dur)=>{const w=$("carryWrap");if(w)w.innerHTML=ring(rem/dur,"carry",mmss(rem));},()=>{carryLog();},"done"); }
 function carryLog(){ const rs=S.result.steps[S.stepIdx]; rs.log.push({done:true}); renderStep(); }
 
 /* ============================================================
