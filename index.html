@@ -203,6 +203,23 @@ let toastT;
 function toast(msg){ toastEl.textContent=msg; toastEl.classList.add("show");
   clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove("show"),1600); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+/* Cue-Block: zeigt einen Technik-/Sicherheitshinweis unter der Übung.
+   cue kann ein String ODER ein String-Array sein. Array → Liste mit Punkten.
+   Leeres/fehlendes cue → "" (rendert nichts). mb = margin-bottom in px. */
+function cueBlock(cue,mb){
+  if(cue==null) return "";
+  const m = mb==null?14:mb;
+  const style = `margin-bottom:${m}px`;
+  if(Array.isArray(cue)){
+    const items=cue.filter(c=>c!=null&&String(c).trim()!=="");
+    if(!items.length) return "";
+    if(items.length===1) return `<div class="note" style="${style}">💡 ${esc(items[0])}</div>`;
+    return `<div class="note" style="${style}"><div style="display:flex;flex-direction:column;gap:5px">${
+      items.map(c=>`<div style="display:flex;gap:7px"><span style="opacity:.8">•</span><span>${esc(c)}</span></div>`).join("")}</div></div>`;
+  }
+  if(String(cue).trim()==="") return "";
+  return `<div class="note" style="${style}">💡 ${esc(cue)}</div>`;
+}
 function mmss(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60),s=sec%60; return m+":"+String(s).padStart(2,"0"); }
 
 /* ---------- audio ----------
@@ -514,27 +531,20 @@ function renderTransition(){
   const prev=S.stepIdx>0?S.spec.steps[S.stepIdx-1]:null;
   const fromWarmup = prev && prev.type==="warmup";
   const toCooldown = s.type==="cooldown";
-  const pauseSec = fromWarmup?15 : (toCooldown?12 : 25);
+  // Normale Block-Übergänge: keine Wartezeit, direkt zum nächsten Schritt.
+  if(!fromWarmup && !toCooldown){ renderStep(); return; }
   const label = fromWarmup ? "Warmup erledigt – los geht's 💪"
-              : toCooldown ? "Fast geschafft – Ausklang"
-              : "Kurze Pause – durchatmen";
+              : "Fast geschafft – Ausklang";
   setRun(`<div class="phase-rest" style="margin-top:6px">
     <div class="center" style="margin:4px 0 0"><span class="pill rest">${label}</span></div>
-    <div class="timer" id="trWrap">${ring(1,"Pause",mmss(pauseSec))}</div>
-    <div class="card">
+    <div class="card" style="margin-top:14px">
       <div class="eyebrow" style="margin-bottom:6px">Als Nächstes</div>
       <div style="font-weight:750;font-size:17px;margin-bottom:2px">${esc(stepTitle(s))}</div>
       <div class="muted" style="font-size:14px">${transitionDetail(s)}</div>
     </div>
     ${fromWarmup?`<div class="card"><div class="eyebrow" style="margin-bottom:6px">Das kommt heute</div>${upcomingList(S.stepIdx)}</div>`:""}
   </div>`);
-  setBar(`<div class="btn-row">
-    <button class="btn sec" style="flex:none;width:34%" onclick="Timer.add(30)">+30s</button>
-    <button class="btn" onclick="startCurrentStep()">${fromWarmup?"Starten":"Weiter"}</button>
-  </div>`);
-  cueRest();
-  Timer.start(pauseSec,(rem,dur)=>{ const w=$("trWrap"); if(w) w.innerHTML=ring(rem/dur,"Pause",mmss(rem)); },
-    ()=>{ Timer.stop(); renderStep(); }, "go");
+  setBar(`<button class="btn" onclick="startCurrentStep()">${fromWarmup?"Starten":"Weiter"}</button>`);
 }
 // manueller Tap auf „Starten/Weiter" — Start-Ton sofort (Vordergrund)
 function startCurrentStep(){ Timer.stop(); cueWork(); renderStep(); }
@@ -599,6 +609,7 @@ function renderStrength(s){
     <h1 style="margin:4px 0 2px">${esc(s.name)}</h1>
     <p class="muted" style="margin-bottom:14px">
       Ziel ${esc(repText(s.repTarget))} Wdh${s.load?(" · "+esc(s.load.text||(s.load.kg+" kg"))):""} · RIR ${esc(s.rirTarget)}</p>
+    ${cueBlock(s.cue)}
     ${s.lastTime?`<div class="note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
     <div class="card">
       ${stepperField("Wiederholungen","reps",1,"Wdh")}
@@ -693,6 +704,7 @@ function renderPlyo(s){
     <p class="muted" style="margin-bottom:12px">
       Ziel ${esc(repText(s.repTarget))} Wdh${s.boxHeightCm?(" · Box "+s.boxHeightCm+" cm"):""}${loadLabel}</p>
     <div class="note" style="margin-bottom:14px">⚡ Explosiv, sauber landen — volle Erholung zwischen den Sätzen, <b>nicht</b> bis zur Erschöpfung.</div>
+    ${cueBlock(s.cue)}
     ${s.note?`<div class="note" style="margin-bottom:14px">${esc(s.note)}</div>`:""}
     ${s.lastTime?`<div class="note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
     <div class="card">
@@ -764,6 +776,8 @@ function renderSuperset(s){
     <div class="eyebrow">Runde ${round+1}/${s.rounds} · Übung ${exI+1}/${exN}</div>
     <h1 style="margin:4px 0 2px">${esc(ex.name)}</h1>
     <p class="muted" style="margin-bottom:14px">Ziel ${esc(repText(ex.repTarget))} Wdh${ex.load?(" · "+esc(ex.load.text||(ex.load.kg+" kg"))):""}${ex.rirTarget!=null?(" · RIR "+ex.rirTarget):""}</p>
+    ${cueBlock(ex.cue)}
+    ${s.cue&&round===0&&exI===0?cueBlock(s.cue):""}
     ${s.lastTime&&round===0&&exI===0?`<div class="note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
     <div class="card">
       ${stepperField("Wiederholungen","reps",1,"Wdh")}
@@ -836,6 +850,7 @@ function intervalShow(s){
     <h1 class="center" style="margin:10px 0 0;font-size:24px">${esc(p.move||(p.kind==='rest'?'Pause':''))}</h1>
     <p class="center muted" style="margin-bottom:2px">${p.kind==='work'?("Runde "+wIdx+" / "+workRounds):"locker"}${s.repTargetPerRound&&p.kind==='work'?(" · Ziel "+s.repTargetPerRound+" Wdh"):""}${s.load&&p.kind==='work'?(" · "+esc(s.load.text||s.load)):""}</p>
     <div class="timer" id="ivWrap">${ring(1,p.kind==='work'?"arbeit":"pause",mmss(p.sec))}</div>
+    ${p.kind==='work'?cueBlock(s.cue,10):""}
     ${s.note?`<div class="note">${esc(s.note)}</div>`:""}
   </div>`);
   if(!S.sub.running){
@@ -889,12 +904,12 @@ function buildCircuit(s){
     s.stations.forEach((st)=>{
       if(st.perSide && st.durationSec){
         const hold=!!st.hold;
-        ph.push({timed:true,sec:st.durationSec,name:st.name+" (links)",hold,round:r});
-        ph.push({timed:true,sec:st.durationSec,name:st.name+" (rechts)",hold,round:r});
+        ph.push({timed:true,sec:st.durationSec,name:st.name+" (links)",hold,cue:st.cue,round:r});
+        ph.push({timed:true,sec:st.durationSec,name:st.name+" (rechts)",hold,cue:st.cue,round:r});
       } else if(st.durationSec){
-        ph.push({timed:true,sec:st.durationSec,name:st.name,hold:!!st.hold,round:r});
+        ph.push({timed:true,sec:st.durationSec,name:st.name,hold:!!st.hold,cue:st.cue,round:r});
       } else {
-        ph.push({timed:false,reps:st.reps,name:st.name+(st.perSide?" (pro Seite)":""),round:r,load:st.load});
+        ph.push({timed:false,reps:st.reps,name:st.name+(st.perSide?" (pro Seite)":""),round:r,load:st.load,cue:st.cue});
       }
     });
     if((s.restBetweenRoundsSec||0)>0 && r<s.rounds-1) ph.push({timed:true,sec:s.restBetweenRoundsSec,name:"Pause",rest:true,round:r});
@@ -914,6 +929,7 @@ function circuitShow(s){
     <h1 class="center" style="margin:8px 0 0;font-size:23px">${esc(p.name)}</h1>
     ${p.timed?`<div class="timer" id="ccWrap">${ring(1,p.rest?"pause":(p.hold?"halten":""),mmss(p.sec))}</div>`
       :`<div class="center" style="padding:34px 0"><div class="big-num" style="font-size:64px;color:var(--accent)">${esc(p.reps||"")}</div><div class="t-sub" style="color:var(--muted)">Wiederholungen${p.load?(" · "+esc(p.load.text||p.load)):""}</div></div>`}
+    ${!p.rest?cueBlock(p.cue,8):""}
   </div>`);
   if(p.timed){
     if(!S.sub.running) setBar(`<button class="btn" onclick="ccStart()">${S.sub.pi===0?"Core starten":"Weiter"}</button>`);
@@ -1066,6 +1082,7 @@ function renderCardio(s){
         ${s.targetSpm?`<div class="kv"><span>Schlagzahl</span><b>${Array.isArray(s.targetSpm)?s.targetSpm.join("–"):s.targetSpm} spm</b></div>`:""}
       </div>
       ${s.note?`<div class="note">${esc(s.note)}</div>`:""}
+      ${cueBlock(s.cue,0)}
       ${hrZones()?`<div class="card"><div class="eyebrow" style="margin-bottom:8px">HF-Zonen</div>
         ${hrZones().map(zz=>`<div class="kv" style="font-size:13.5px"><span>${esc(zz.z)} · ${esc(zz.name||"")}</span><b class="muted">${zz.lo}–${zz.hi}</b></div>`).join("")}</div>`:""}`);
     setBar(`<button class="btn" onclick="cardioGo(${targetSec})">Timer starten</button>`);
@@ -1167,6 +1184,7 @@ function renderCarry(s){
   setRun(`<div class="eyebrow">Runde ${done+1}/${s.rounds}</div>
     <h1 style="margin:4px 0 4px">${esc(s.name)}</h1>
     <p class="muted" style="margin-bottom:14px">${s.load?esc(s.load.text||(s.load.kg+" kg")):""}${s.distanceM?(" · "+s.distanceM+" m"):""}${s.durationSec?(" · "+s.durationSec+" s"):""}</p>
+    ${cueBlock(s.cue)}
     ${timed?`<div class="timer phase-work" id="carryWrap">${ring(1,"carry",mmss(s.durationSec))}</div>`:`<div class="note">Strecke gehen, dann „Runde fertig".</div>`}`);
   if(timed) setBar(`<button class="btn" onclick="carryGo(${s.durationSec})">Starten</button>`);
   else setBar(`<button class="btn" onclick="carryLog()">Runde fertig</button>`);
