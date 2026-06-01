@@ -950,13 +950,44 @@ function ccRun(){
   Timer.start(p.sec,(rem,dur)=>{ const w=$("ccWrap"); if(w)w.innerHTML=ring(rem/dur,p.rest?"pause":(p.hold?"halten":""),mmss(rem)); },
     ()=>{ ccAdvance(); }, endKind);
 }
+// kurze Übergangs-Phase zwischen zwei Stationen: nächste Übung ankündigen + 3-2-1-Countdown
+// (analog zur Mobility-Einnehmphase moPrep). Rein laufzeit-intern — verändert WEDER die
+// Spec/Result-Struktur NOCH die Stationsliste, nur den Ablauf in der App.
+const CC_PREP=3; // Sekunden Übergang zwischen den Übungen
+function ccPrepShow(s,p,sec){
+  setRun(`<div class="phase-rest">
+    <div class="center" style="margin:6px 0"><span class="pill rest">${esc(s.label||"Core")} · Nächste Übung</span></div>
+    <h1 class="center" style="margin:10px 0 0;font-size:23px">${esc(p.name)}</h1>
+    <div class="timer" id="ccWrap">${ring(1,"bereitmachen",mmss(sec))}</div>
+    ${cueBlock(p.cue,8)}
+  </div>`);
+  setBar(`<div class="btn-row">
+    <button class="btn sec" style="flex:none;width:34%" onclick="ccPause()">${Timer.paused?"Weiter":"Pause"}</button>
+    <button class="btn" onclick="ccSkipPrep()">Jetzt starten</button></div>`);
+}
+function ccPrep(s,p){
+  S.sub.inPrep=true; S.sub.running=true;
+  ccPrepShow(s,p,CC_PREP);
+  Timer.start(CC_PREP,(rem,dur)=>{ const w=$("ccWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
+    ()=>{ S.sub.inPrep=false; ccRun(); }, "go");
+}
+function ccSkipPrep(){ Timer.stop(); S.sub.inPrep=false; ccRun(); }
 function ccAdvance(){ S.sub.pi++; const s=S.spec.steps[S.stepIdx];
-  if(S.sub.pi<S.sub.phases.length){ const np=S.sub.phases[S.sub.pi]; if(np.timed) ccRun(); else { S.sub.running=false; circuitShow(s);} }
-  else { circuitDone(s); } }
+  if(S.sub.pi>=S.sub.phases.length){ return circuitDone(s); }
+  const np=S.sub.phases[S.sub.pi];
+  if(np.rest){ S.sub.inPrep=false; S.sub.running=true; ccRun(); }   // Rundenpause: kein Übergang davor
+  else { ccPrep(s,np); }                                            // vor jede Übung ein 3s-Übergang
+}
 function ccNextManual(){ S.sub.pi++; const s=S.spec.steps[S.stepIdx];
-  if(S.sub.pi<S.sub.phases.length){ const np=S.sub.phases[S.sub.pi]; if(np.timed){S.sub.running=true; (np.rest?cueRest():cueWork()); ccRun();}else circuitShow(s); }
-  else { cueDone(); circuitDone(s); } }
-function ccPause(){ if(Timer.paused)Timer.resume();else Timer.pause(); circuitShow(S.spec.steps[S.stepIdx]); }
+  if(S.sub.pi>=S.sub.phases.length){ cueDone(); return circuitDone(s); }
+  const np=S.sub.phases[S.sub.pi];
+  if(np.rest){ S.sub.inPrep=false; S.sub.running=true; cueRest(); ccRun(); }
+  else { ccPrep(s,np); }
+}
+function ccPause(){ if(Timer.paused)Timer.resume();else Timer.pause();
+  const s=S.spec.steps[S.stepIdx];
+  if(S.sub.inPrep){ ccPrepShow(s,S.sub.phases[S.sub.pi],Math.max(0,Timer.remainAtPause||CC_PREP)); }
+  else circuitShow(s); }
 function ccSkip(){ Timer.stop(); ccAdvance(); }
 function circuitDone(s){
   Timer.stop(); const rs=S.result.steps[S.stepIdx]; rs.status="done"; rs.done=true;
