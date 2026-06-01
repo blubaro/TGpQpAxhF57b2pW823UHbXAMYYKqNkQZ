@@ -228,14 +228,29 @@ function mmss(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60),
    bei JEDER Interaktion + bei Rückkehr in den Vordergrund reaktivieren und
    vor jedem Ton einen resume()-Versuch starten. Töne werden als Sequenz
    relativ zu AC.currentTime geplant (zuverlässiger als setTimeout-Ketten). */
-let AC=null, audioReady=false;
+let AC=null, audioReady=false, _bus=null;
+// Globaler Lautstärke-Boost für ALLE Töne (damit sie über Musik hörbar sind).
+// Alle Töne laufen durch _bus → Limiter → Ausgang; der Limiter fängt Übersteuern
+// ab, sodass wir kräftig boosten können, ohne dass es kratzt/verzerrt.
+const VOL=2.4;
+function buildBus(){
+  if(!AC || _bus) return;
+  try{
+    _bus=AC.createGain(); _bus.gain.value=1;
+    const lim=AC.createDynamicsCompressor();  // als Limiter konfiguriert
+    lim.threshold.value=-4; lim.knee.value=4; lim.ratio.value=20;
+    lim.attack.value=0.002; lim.release.value=0.10;
+    _bus.connect(lim); lim.connect(AC.destination);
+  }catch(e){ _bus=null; }
+}
 function unlockAudio(){
   try{
     if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
+    buildBus();
     if(AC.state!=="running") AC.resume();
     if(!audioReady){
       const b=AC.createBuffer(1,1,22050), s=AC.createBufferSource();
-      s.buffer=b; s.connect(AC.destination); s.start(0);
+      s.buffer=b; s.connect(_bus||AC.destination); s.start(0);
       audioReady=true;
     }
   }catch(e){}
@@ -249,10 +264,11 @@ function ensureAudio(){ try{ if(AC && AC.state!=="running") AC.resume(); }catch(
 function _osc(freq,t0,dur,vol,type){
   const o=AC.createOscillator(), g=AC.createGain();
   o.type=type||"sine"; o.frequency.setValueAtTime(freq,t0);
+  const v=Math.min(0.95,(vol||0.2)*VOL);   // Boost + Schutz-Clamp; Limiter im Bus fängt Spitzen
   g.gain.setValueAtTime(0.0001,t0);
-  g.gain.exponentialRampToValueAtTime(vol,t0+0.012);
+  g.gain.exponentialRampToValueAtTime(v,t0+0.012);
   g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
-  o.connect(g); g.connect(AC.destination);
+  o.connect(g); g.connect(_bus||AC.destination);
   o.start(t0); o.stop(t0+dur+0.03);
   return o;
 }
@@ -265,6 +281,8 @@ function cueWork(){ ensureAudio(); tone(660,0,.12,.28); tone(880,.11,.12,.30); t
 function cueRest(){ ensureAudio(); tone(620,0,.16,.20); tone(470,.13,.22,.17); vibrate(70); }
 function cueDone(){ ensureAudio(); tone(660,0,.11,.30); tone(880,.11,.11,.30); tone(1175,.22,.12,.32); tone(1568,.36,.28,.36); vibrate([80,50,80,50,160]); }
 function cueSoft(){ ensureAudio(); tone(440,0,.22,.10); tone(560,.10,.20,.09); vibrate(40); }
+// Anläuten zu Beginn eines Übergangs ("gleich geht's los") — helles Doppel-Glöckchen
+function cueAnnounce(){ ensureAudio(); tone(988,0,.18,.32); tone(1319,.16,.26,.40); vibrate([60,40,60]); }
 function vibrate(p){ if(navigator.vibrate) try{navigator.vibrate(p);}catch(e){} }
 
 /* ---------- vorab geplanter End-Alarm ----------
@@ -291,7 +309,7 @@ function scheduleAlarm(kind,durSec){
   clearScheduled(); ensureAudio();
   if(!AC || !(durSec>0)) return;
   // 3-2-1-Countdown kurz vor Schluss (steigende Tonhöhe) — bei "soft" (Mobility) bewusst ohne, damit Holds ruhig bleiben
-  if(kind!=="soft") [3,2,1].forEach(n=>{ if(durSec>n+0.25) schedTone(n===1?1320:760, durSec-n, .09, .22); });
+  if(kind!=="soft") [3,2,1].forEach(n=>{ if(durSec>n+0.25) schedTone(n===1?1320:760, durSec-n, .12, .42); });
   (ALARM[kind]||ALARM.go).forEach(([f,off,d,v])=>schedTone(f, durSec+off, d, v));
 }
 
@@ -953,7 +971,7 @@ function ccRun(){
 // kurze Übergangs-Phase zwischen zwei Stationen: nächste Übung ankündigen + 3-2-1-Countdown
 // (analog zur Mobility-Einnehmphase moPrep). Rein laufzeit-intern — verändert WEDER die
 // Spec/Result-Struktur NOCH die Stationsliste, nur den Ablauf in der App.
-const CC_PREP=3; // Sekunden Übergang zwischen den Übungen
+const CC_PREP=5; // Sekunden Übergang zwischen den Übungen
 function ccPrepShow(s,p,sec){
   setRun(`<div class="phase-rest">
     <div class="center" style="margin:6px 0"><span class="pill rest">${esc(s.label||"Core")} · Nächste Übung</span></div>
@@ -967,6 +985,7 @@ function ccPrepShow(s,p,sec){
 }
 function ccPrep(s,p){
   S.sub.inPrep=true; S.sub.running=true;
+  cueAnnounce();                              // 5s anläuten: "gleich geht's los"
   ccPrepShow(s,p,CC_PREP);
   Timer.start(CC_PREP,(rem,dur)=>{ const w=$("ccWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
     ()=>{ S.sub.inPrep=false; ccRun(); }, "go");
@@ -1068,6 +1087,7 @@ function moPrepShow(s,p,sec){
 }
 function moPrep(s,p){
   S.sub.inPrep=true;
+  cueAnnounce();                              // anläuten: nächste Pose kommt
   moPrepShow(s,p,MOB_PREP);
   Timer.start(MOB_PREP,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
     ()=>{ moHold(s,p); }, "go");
