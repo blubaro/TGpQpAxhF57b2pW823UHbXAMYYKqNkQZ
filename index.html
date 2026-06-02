@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#F4F2EC">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -160,12 +160,17 @@ a{color:var(--accent-ink)}
 <script>
 "use strict";
 /* ============================================================
-   Coach Runner v2  —  rendert workout-spec, gibt workout-result
-   Single file, vanilla JS, offline-tauglich. schemaVersion 1.
+   Coach Runner  —  rendert workout-spec, gibt workout-result
+   Single file, vanilla JS, offline-tauglich. schemaVersion 2.
+
+   Änderungen v1 → v2:
+   - cardio strukturiert via segments[] (statt flachem durationMin+targetHr)
+   - circuit.stations[] akzeptiert distanceM (z.B. 30m Carry als Station)
+   - v1-Specs werden automatisch beim Import auf v2 normalisiert
    ============================================================ */
 
-const SCHEMA = 1;
-const SAVE_KEY = "coachRunner.session.v1";
+const SCHEMA = 2;
+const SAVE_KEY = "coachRunner.session.v2";   // v1-Bucket bewusst gewechselt, damit alte localStorage-Sessions keine Crash-Recovery auslösen
 const WD = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
 
 // HF-Zonen kommen ausschließlich aus der Spec (optionales Feld spec.hrZones).
@@ -259,7 +264,20 @@ function unlockAudio(){
 ["touchstart","pointerdown","mousedown","keydown"].forEach(ev=>{
   document.addEventListener(ev,unlockAudio,{passive:true});
 });
-function ensureAudio(){ try{ if(AC && AC.state!=="running") AC.resume(); }catch(e){} }
+function ensureAudio(){
+  try{
+    if(!AC){ unlockAudio(); return; }
+    // iOS Safari kann den Context in "closed" stellen (nach langem Idle / Suspend).
+    // Dann ist resume() nutzlos — Pipeline komplett neu aufbauen.
+    if(AC.state==="closed"){
+      try{ AC=null; _bus=null; audioReady=false; }catch(_){}
+      unlockAudio(); return;
+    }
+    if(AC.state!=="running") AC.resume();
+  }catch(e){
+    try{ AC=null; _bus=null; audioReady=false; unlockAudio(); }catch(_){}
+  }
+}
 // einen Oszillator-Ton zu absoluter Audio-Zeit t0 planen und zurückgeben
 function _osc(freq,t0,dur,vol,type){
   const o=AC.createOscillator(), g=AC.createGain();
@@ -324,6 +342,9 @@ async function keepAwake(){
   }catch(e){}
 }
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"){ unlockAudio(); if(S.screen==="run") keepAwake(); } });
+// PWA-Edge-Cases: nach bfcache-Restore und Focus-Wechsel ebenfalls reaktivieren.
+window.addEventListener("pageshow",()=>{ unlockAudio(); if(S.screen==="run") keepAwake(); });
+window.addEventListener("focus",()=>{ if(S.screen==="run") keepAwake(); });
 
 /* ---------- timer engine ---------- */
 const Timer = {
@@ -391,9 +412,78 @@ function validateSpec(o){
   if(!o||typeof o!=="object") return ["Kein gültiges JSON gefunden."];
   if(o.kind!=="workout-spec") errs.push('Feld "kind" muss "workout-spec" sein.');
   if(!Array.isArray(o.steps)||!o.steps.length) errs.push('"steps" fehlt oder ist leer.');
-  (o.steps||[]).forEach((s,i)=>{ if(!s.id) errs.push(`Schritt ${i+1}: "id" fehlt.`);
-    if(!s.type) errs.push(`Schritt ${i+1}: "type" fehlt.`); });
+  (o.steps||[]).forEach((s,i)=>{
+    const id = s.id ? `Schritt ${i+1} (${s.id})` : `Schritt ${i+1}`;
+    if(!s.id) errs.push(`Schritt ${i+1}: "id" fehlt.`);
+    if(!s.type){ errs.push(`Schritt ${i+1}: "type" fehlt.`); return; }
+    switch(s.type){
+      case "strength":
+      case "plyo":
+        if(!s.name) errs.push(`${id}: "name" fehlt.`);
+        if(!s.sets) errs.push(`${id}: "sets" fehlt.`);
+        if(s.repTarget==null) errs.push(`${id}: "repTarget" fehlt.`);
+        break;
+      case "superset":
+        if(!s.rounds) errs.push(`${id}: "rounds" fehlt.`);
+        if(!Array.isArray(s.exercises) || !s.exercises.length) errs.push(`${id}: "exercises" leer.`);
+        break;
+      case "interval":
+        if(!s.scheme) errs.push(`${id}: "scheme" fehlt (emom/intervals/tabata).`);
+        if(!s.rounds) errs.push(`${id}: "rounds" fehlt.`);
+        if(!s.workSec) errs.push(`${id}: "workSec" fehlt.`);
+        break;
+      case "circuit":
+        if(!s.rounds) errs.push(`${id}: "rounds" fehlt.`);
+        if(!Array.isArray(s.stations) || !s.stations.length) errs.push(`${id}: "stations" leer.`);
+        break;
+      case "cardio":
+        // Nach normalizeSpec ist segments[] gesetzt; ohne segments + ohne durationMin = unbrauchbar
+        if(!Array.isArray(s.segments) && s.durationMin==null) errs.push(`${id}: "segments" oder "durationMin" fehlt.`);
+        if(Array.isArray(s.segments)){
+          s.segments.forEach((seg,j)=>{ if(!seg.durationSec) errs.push(`${id} · Segment ${j+1}: "durationSec" fehlt.`); });
+        }
+        if(!s.modality) errs.push(`${id}: "modality" fehlt (row/run/bike).`);
+        break;
+      case "carry":
+        if(!s.name) errs.push(`${id}: "name" fehlt.`);
+        if(!s.rounds) errs.push(`${id}: "rounds" fehlt.`);
+        break;
+      case "mobility":
+        if(!Array.isArray(s.poses) || !s.poses.length) errs.push(`${id}: "poses" leer.`);
+        break;
+      case "warmup":
+      case "cooldown":
+        // items[] empfohlen aber nicht zwingend
+        break;
+      default:
+        errs.push(`${id}: unbekannter type "${s.type}".`);
+    }
+  });
   return errs;
+}
+
+/* v1 → v2 normalisieren: alte flache cardio-Felder in segments[] heben.
+   Wirkt nur, wenn schemaVersion fehlt oder <2. Idempotent. */
+function normalizeSpec(o){
+  if(!o || typeof o!=="object") return o;
+  if(o.schemaVersion && o.schemaVersion>=2) return o;
+  (o.steps||[]).forEach(s=>{
+    if(s.type!=="cardio") return;
+    if(Array.isArray(s.segments) && s.segments.length) return;     // schon v2-Form
+    const dur = (s.durationMin||30)*60;
+    const seg = { durationSec: dur };
+    if(s.targetHr) seg.targetHr = s.targetHr;
+    if(s.targetSpm!=null){
+      if(Array.isArray(s.targetSpm)) seg.targetSpm = {min:s.targetSpm[0], max:s.targetSpm[1]};
+      else if(typeof s.targetSpm==="number") seg.targetSpm = {min:s.targetSpm, max:s.targetSpm};
+      else seg.targetSpm = s.targetSpm;
+    }
+    if(s.cue) seg.cue = s.cue;
+    s.segments = [seg];
+    if(!s.totalDurationMin) s.totalDurationMin = s.durationMin;
+  });
+  o.schemaVersion = 2;
+  return o;
 }
 
 /* ============================================================
@@ -435,6 +525,7 @@ function doImport(){
   if(o.schemaVersion && o.schemaVersion>SCHEMA){
     $("impErr").innerHTML=`<div class="note">Hinweis: Spec ist Schema v${o.schemaVersion}, App kennt v${SCHEMA}. Ich versuche es trotzdem.</div>`;
   }
+  normalizeSpec(o);
   S.spec=o;
   S.result=JSON.parse(JSON.stringify(o));
   S.result.kind="workout-result";
@@ -486,12 +577,22 @@ function stepMetaShort(s){
   if(s.type==="superset")return `${s.rounds} Runden`;
   if(s.type==="interval")return `${s.rounds}× ${s.workSec}s`;
   if(s.type==="circuit")return `${s.rounds} Runden`;
-  if(s.type==="cardio")return `${s.durationMin} min`;
+  if(s.type==="cardio"){
+    const total=cardioTotalMin(s);
+    const segs=(s.segments||[]).length;
+    return segs>1 ? `${total} min · ${segs} Segm.` : `${total} min`;
+  }
   if(s.type==="carry")return `${s.rounds}×`;
   if(s.type==="mobility")return `${(s.poses||[]).length} Posen`;
   if(s.type==="plyo")return `${s.sets}×${repText(s.repTarget)}`;
   if((s.type==="warmup"||s.type==="cooldown")&&s.durationSec)return `${Math.round(s.durationSec/60)} min`;
   return "";
+}
+// Gesamt-Minuten eines Cardio-Steps: bevorzugt totalDurationMin, sonst Summe segments.
+function cardioTotalMin(s){
+  if(s.totalDurationMin) return s.totalDurationMin;
+  const sum=(s.segments||[]).reduce((a,x)=>a+(x.durationSec||0),0);
+  return Math.round(sum/60);
 }
 function repText(rt){ if(Array.isArray(rt))return rt[0]+"–"+rt[1]; return String(rt); }
 
@@ -502,13 +603,97 @@ function startWorkout(){ unlockAudio(); keepAwake(); S.screen="run"; S.startedAt
 function topbar(){
   const tot=S.spec.steps.length, i=S.stepIdx;
   const frac=Math.min(1,(i)/tot);
+  const backDisabled = !canGoBack();
   return `<div class="topbar">
     <button class="iconbtn" onclick="confirmQuit()">✕</button>
-    <button class="iconbtn" onclick="prevStep()" ${i===0?'disabled':''} aria-label="Zurück">‹</button>
+    <button class="iconbtn" onclick="goBack()" ${backDisabled?'disabled':''} aria-label="Einen Schritt zurück">‹</button>
     <div class="prog-wrap">
       <div class="prog-label"><span>Schritt ${i+1} / ${tot}</span><span>${esc(stepTitle(S.spec.steps[i]))}</span></div>
       <div class="bar"><i style="width:${frac*100}%"></i></div>
     </div></div>`;
+}
+// Kann ich überhaupt zurück? Entweder gibt es vorherige Schritte ODER innerhalb des
+// aktuellen Schritts existiert Mikro-State (Log-Einträge, Phase-Index, Cardio-Segment).
+function canGoBack(){
+  if(S.stepIdx>0) return true;
+  const s=S.spec.steps[0], rs=S.result.steps[0];
+  if(!s||!rs) return false;
+  if(rs.log && rs.log.length>0) return true;
+  if(S.sub && S.sub.phases && (S.sub.pi||0)>0) return true;
+  if(s.type==="cardio" && S.sub && (S.sub.segIdx||0)>0) return true;
+  return false;
+}
+// Bevor ein Re-Render passiert, das aktuelle Bildschirm-State sichern:
+// derzeit nur der „Notiz"-Textbereich (exNote/sumNote) — keine anderen.
+function preserveScreenState(){
+  const ex=$("exNote");
+  if(ex && S.result && S.result.steps && S.result.steps[S.stepIdx]){
+    const v=(ex.value||"").trim();
+    if(v) S.result.steps[S.stepIdx].note=v;
+    else delete S.result.steps[S.stepIdx].note;
+  }
+  // Tagesform/Gesamt-Notiz von der Summary-Seite ist Sache der Summary-Logik selbst.
+}
+// Einen Mikro-Schritt zurück. Unterscheidet sich nach Step-Typ.
+function goBack(){
+  if(!S.spec||!S.spec.steps) return;
+  const s=S.spec.steps[S.stepIdx];
+  const rs=S.result.steps[S.stepIdx];
+  if(!s||!rs){ return prevStep(); }
+  preserveScreenState();
+
+  // PHASE-BASED: interval / circuit / mobility — eine Phase zurück
+  if(s.type==="interval" || s.type==="circuit" || s.type==="mobility"){
+    const phases=S.sub.phases;
+    if(phases && phases.length){
+      Timer.stop();
+      let pi = S.sub.pi||0;
+      if(pi >= phases.length) pi = phases.length - 1;     // vom Done-Screen zur letzten Phase
+      else if(pi > 0) pi -= 1;
+      else { return prevStep(); }                          // pi===0 → ganzen Schritt zurück
+      S.sub.pi = pi;
+      S.sub.inPrep = false;
+      S.sub.running = false;
+      if(rs.status==="done") delete rs.status;
+      if(rs.done) delete rs.done;
+      renderStep();
+      return;
+    }
+    return prevStep();
+  }
+
+  // LOG-BASED: strength / superset / plyo / carry — letzten Log-Eintrag poppen
+  if(s.type==="strength" || s.type==="superset" || s.type==="plyo" || s.type==="carry"){
+    if(rs.log && rs.log.length>0){
+      const last = rs.log.pop();
+      // S.sub vom gepoppten Eintrag wiederherstellen (außer Carry: dort kein Wert-Recovery)
+      if(s.type!=="carry" && last){
+        if(last.reps!=null) S.sub.reps = last.reps;
+        if(last.load!=null) S.sub.load = last.load;
+        if(last.rir!=null)  S.sub.rir  = last.rir;
+      }
+      if(rs.status==="done") delete rs.status;
+      renderStep();
+      return;
+    }
+    return prevStep();
+  }
+
+  // CARDIO: nur bei segmentiert + bereits gestartet sinnvoll
+  if(s.type==="cardio"){
+    const segs=s.segments||[];
+    if(segs.length>1 && S.sub.cardioStarted && (S.sub.segIdx||0)>0){
+      Timer.stop();
+      const prevIdx = S.sub.segIdx - 1;
+      S.sub.segDoneSec = Math.max(0,(S.sub.segDoneSec||0) - (segs[prevIdx].durationSec||0));
+      S.sub.segIdx = prevIdx;
+      cardioSegmentRun(s);       // re-starte das vorherige Segment
+      return;
+    }
+    return prevStep();
+  }
+
+  return prevStep();
 }
 /* Index bewegen (ohne Render) – Logs in S.result bleiben erhalten,
    nur der transiente Schritt-Fortschritt S.sub wird zurückgesetzt. */
@@ -532,7 +717,12 @@ function transitionDetail(s){
   if(s.type==="superset")return `${s.rounds} Runden · ${(s.exercises||[]).map(e=>esc(e.name)).join(" + ")}`;
   if(s.type==="interval")return `${(s.scheme||"").toUpperCase()} · ${s.rounds}× ${s.workSec}s`;
   if(s.type==="circuit")return `${s.rounds} Runden · ${(s.stations||[]).length} Stationen`;
-  if(s.type==="cardio")return `${s.durationMin} min · ${s.targetHr?("Ziel "+s.targetHr.zone):"Zone 2"}`;
+  if(s.type==="cardio"){
+    const total=cardioTotalMin(s), segs=(s.segments||[]);
+    if(segs.length===1 && segs[0].targetHr) return `${total} min · Ziel ${segs[0].targetHr.zone||""}`;
+    if(segs.length>1) return `${total} min · ${segs.length} Segmente`;
+    return `${total} min`;
+  }
   if(s.type==="carry")return `${s.rounds} Runden${s.load?(" · "+esc(s.load.text||(s.load.kg+" kg"))):""}`;
   if(s.type==="mobility")return `${(s.poses||[]).length} Posen · ruhig & atemgeführt`;
   if(s.type==="plyo")return `${s.sets} Sätze × ${repText(s.repTarget)}${s.boxHeightCm?(" · Box "+s.boxHeightCm+" cm"):""}`;
@@ -694,11 +884,28 @@ function strengthDone(s,rs){
   setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`);
 }
 function saveExNote(){ const t=$("exNote"); if(t) S.result.steps[S.stepIdx].note=t.value.trim()||undefined; }
+// Inline-Sheet statt nativem prompt() — sieht auf iOS PWA besser aus und ist konsistent.
 function skipExercise(){
+  const s=S.spec.steps[S.stepIdx];
+  setRun(`<div style="padding-top:12px">
+    <div class="eyebrow">Übersprungen markieren</div>
+    <h1 style="margin:4px 0 8px">${esc(stepTitle(s))}</h1>
+    <p class="muted" style="margin-bottom:14px">Optionaler Grund — hilft dem Coach beim Logbuch.</p>
+    <div class="card">
+      <textarea class="txt" id="skipReason" rows="3" placeholder="z.B. Schulter zwickt · Equipment fehlt · Zeit knapp"></textarea>
+    </div>
+  </div>`);
+  setBar(`<div class="btn-row">
+    <button class="btn sec" style="flex:none;width:40%" onclick="renderStep()">Doch nicht</button>
+    <button class="btn" onclick="confirmSkip()">Überspringen</button>
+  </div>`);
+}
+function confirmSkip(){
+  const el=$("skipReason");
+  const why=(el && el.value? el.value.trim() : "")||"übersprungen";
   const rs=S.result.steps[S.stepIdx];
-  const why=prompt("Übung überspringen — kurzer Grund (optional):")||"";
-  rs.status="skipped"; rs.skipReason=why.trim()||"übersprungen";
-  if(rs.log&&!rs.log.length) delete rs.log;
+  rs.status="skipped"; rs.skipReason=why;
+  if(rs.log && !rs.log.length) delete rs.log;
   toast("Übung übersprungen"); skipToNext();
 }
 
@@ -920,14 +1127,29 @@ function buildCircuit(s){
   const ph=[];
   for(let r=0;r<s.rounds;r++){
     s.stations.forEach((st)=>{
+      const base={cue:st.cue,round:r,load:st.load};
+      // perSide + timed → split
       if(st.perSide && st.durationSec){
         const hold=!!st.hold;
-        ph.push({timed:true,sec:st.durationSec,name:st.name+" (links)",hold,cue:st.cue,round:r});
-        ph.push({timed:true,sec:st.durationSec,name:st.name+" (rechts)",hold,cue:st.cue,round:r});
-      } else if(st.durationSec){
-        ph.push({timed:true,sec:st.durationSec,name:st.name,hold:!!st.hold,cue:st.cue,round:r});
-      } else {
-        ph.push({timed:false,reps:st.reps,name:st.name+(st.perSide?" (pro Seite)":""),round:r,load:st.load,cue:st.cue});
+        ph.push({...base,timed:true,sec:st.durationSec,name:st.name+" (links)",hold});
+        ph.push({...base,timed:true,sec:st.durationSec,name:st.name+" (rechts)",hold});
+      }
+      // perSide + distanceM → split (v2: z.B. Suitcase Carry 30 m je Seite)
+      else if(st.perSide && st.distanceM){
+        ph.push({...base,timed:false,distanceM:st.distanceM,name:st.name+" (links)"});
+        ph.push({...base,timed:false,distanceM:st.distanceM,name:st.name+" (rechts)"});
+      }
+      // timed (no perSide)
+      else if(st.durationSec){
+        ph.push({...base,timed:true,sec:st.durationSec,name:st.name,hold:!!st.hold});
+      }
+      // distance-based (v2)
+      else if(st.distanceM){
+        ph.push({...base,timed:false,distanceM:st.distanceM,name:st.name});
+      }
+      // reps-based (fallback)
+      else {
+        ph.push({...base,timed:false,reps:st.reps,name:st.name+(st.perSide?" (pro Seite)":"")});
       }
     });
     if((s.restBetweenRoundsSec||0)>0 && r<s.rounds-1) ph.push({timed:true,sec:s.restBetweenRoundsSec,name:"Pause",rest:true,round:r});
@@ -946,7 +1168,7 @@ function circuitShow(s){
     <div class="center" style="margin:6px 0"><span class="pill ${p.rest?'rest':'work'}">${esc(s.label||"Core")} · Runde ${p.round+1}/${s.rounds}</span></div>
     <h1 class="center" style="margin:8px 0 0;font-size:23px">${esc(p.name)}</h1>
     ${p.timed?`<div class="timer" id="ccWrap">${ring(1,p.rest?"pause":(p.hold?"halten":""),mmss(p.sec))}</div>`
-      :`<div class="center" style="padding:34px 0"><div class="big-num" style="font-size:64px;color:var(--accent)">${esc(p.reps||"")}</div><div class="t-sub" style="color:var(--muted)">Wiederholungen${p.load?(" · "+esc(p.load.text||p.load)):""}</div></div>`}
+      :`<div class="center" style="padding:34px 0"><div class="big-num" style="font-size:64px;color:var(--accent)">${p.distanceM?(p.distanceM+" m"):esc(p.reps||"")}</div><div class="t-sub" style="color:var(--muted)">${p.distanceM?"Strecke":"Wiederholungen"}${p.load?(" · "+esc(p.load.text||p.load)):""}</div></div>`}
     ${!p.rest?cueBlock(p.cue,8):""}
   </div>`);
   if(p.timed){
@@ -1118,59 +1340,186 @@ function mobilityDone(s){
   setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`);
 }
 
-/* ---- CARDIO ---- */
+/* ---- CARDIO (v2: segments[]) ----
+   Zwei UX-Modi je nach Segmenten:
+   - 1 Segment (flach, z.B. 40 min Z2): Count-up-Timer (UpTimer) wie v1 — Person kann
+     länger/kürzer machen, „Fertig" entscheidet.
+   - n Segmente (z.B. ICG Climb-Profil): Count-down pro Segment, auto-advance, am Ende
+     gesamtes Ergebnisformular. Strikte Timing-Vorgabe je Block. */
 function renderCardio(s){
+  const segs=s.segments||[];
+  if(!segs.length){ skipStep("Cardio ohne Segmente — bitte v2-Spec senden"); return; }
   const isBike=s.modality==="bike";
-  const targetMin=s.durationMin||30, targetSec=targetMin*60;
+  const totalMin=cardioTotalMin(s), totalSec=totalMin*60;
+  const isSingle=segs.length===1;
   if(!S.sub.cardioStarted){
-    const z=s.targetHr;
+    const seg0=segs[0];
     setRun(`
       <div class="eyebrow">${({row:"Rudern",run:"Laufen",bike:"Bike"})[s.modality]||"Ausdauer"}</div>
-      <h1 style="margin:4px 0 12px">${targetMin} min ${z?z.zone:""}</h1>
+      <h1 style="margin:4px 0 12px">${totalMin} min${isSingle&&seg0.targetHr?(" · "+seg0.targetHr.zone):""}${!isSingle?(" · "+segs.length+" Segmente"):""}</h1>
       <div class="card">
-        ${z&&!isBike?`<div class="kv"><span>Ziel-HF</span><b>${z.min}–${z.max} <span class="muted">(${z.zone})</span></b></div>`:""}
-        ${isBike?`<div class="kv"><span>Ziel</span><b>Zone 2 · blau-grün</b></div><div class="kv"><span>Trittfrequenz</span><b>80–95 RPM</b></div>`:""}
-        ${s.targetSpm?`<div class="kv"><span>Schlagzahl</span><b>${Array.isArray(s.targetSpm)?s.targetSpm.join("–"):s.targetSpm} spm</b></div>`:""}
+        ${segs.map((seg,i)=>`<div class="kv">
+          <span><span class="tag ${segIntensityCls(seg)}">${esc(seg.name||("Segment "+(i+1)))}</span> &nbsp;<span class="muted">${mmss(seg.durationSec)}</span></span>
+          <b style="font-size:13.5px">${segmentTargetLabel(seg)}</b>
+        </div>`).join("")}
       </div>
       ${s.note?`<div class="note">${esc(s.note)}</div>`:""}
       ${cueBlock(s.cue,0)}
       ${hrZones()?`<div class="card"><div class="eyebrow" style="margin-bottom:8px">HF-Zonen</div>
         ${hrZones().map(zz=>`<div class="kv" style="font-size:13.5px"><span>${esc(zz.z)} · ${esc(zz.name||"")}</span><b class="muted">${zz.lo}–${zz.hi}</b></div>`).join("")}</div>`:""}`);
-    setBar(`<button class="btn" onclick="cardioGo(${targetSec})">Timer starten</button>`);
+    setBar(`<button class="btn" onclick="cardioStart()">Timer starten</button>`);
     return;
   }
-  cardioRunning(s,targetSec,isBike);
+  if(isSingle) cardioRunningFlat(s,totalSec,isBike);
+  else cardioSegmentShow(s);
 }
-function cardioGo(targetSec){ S.sub.cardioStarted=true; S.sub.targetCued=false; const s=S.spec.steps[S.stepIdx];
-  cardioRunning(s,targetSec,s.modality==="bike"); cueWork(); keepAwake(); scheduleAlarm("done",targetSec);
-  UpTimer.start((e)=>{ const w=$("upWrap"); if(!w)return;
-    const frac=Math.min(1,e/targetSec); w.innerHTML=ring(frac,"verstrichen",mmss(e));
-    if(!S.sub.targetCued && e>=targetSec){ S.sub.targetCued=true; toast("Zielzeit erreicht 🎉"); } }); }
-function cardioRunning(s,targetSec,isBike){
-  const z=s.targetHr, e=UpTimer.elapsed?UpTimer.elapsed():0;
+function segIntensityCls(seg){
+  const it=(seg.intensity||"").toLowerCase();
+  if(it==="hard"||it==="vo2"||it==="threshold") return "";              // accent
+  if(it==="easy"||it==="recovery"||it==="z2"||(seg.targetHr&&/Z[12]/.test(seg.targetHr.zone||""))) return "row";
+  return "";
+}
+function segmentTargetLabel(seg){
+  const p=[];
+  if(seg.targetHr) p.push(`HF ${seg.targetHr.min}–${seg.targetHr.max}${seg.targetHr.zone?(" "+seg.targetHr.zone):""}`);
+  if(seg.targetWatt) p.push(`${seg.targetWatt.min}–${seg.targetWatt.max} W`);
+  if(seg.targetWattColor) p.push(esc(seg.targetWattColor));
+  if(seg.targetRpm) p.push(`${seg.targetRpm.min}–${seg.targetRpm.max} RPM`);
+  if(seg.targetSpm) p.push(`${seg.targetSpm.min}–${seg.targetSpm.max} spm`);
+  if(seg.targetPace) p.push(esc(seg.targetPace));
+  return p.join(" · ") || (seg.intensity?esc(seg.intensity):"locker");
+}
+function cardioStart(){
+  S.sub.cardioStarted=true;
+  const s=S.spec.steps[S.stepIdx];
+  const segs=s.segments||[];
+  const totalSec=segs.reduce((a,x)=>a+(x.durationSec||0),0);
+  cueWork(); keepAwake();
+  if(segs.length===1){
+    // FLAT: count-up
+    S.sub.targetCued=false;
+    scheduleAlarm("done",totalSec);
+    UpTimer.start((e)=>{ const w=$("upWrap"); if(!w)return;
+      const frac=Math.min(1,e/totalSec); w.innerHTML=ring(frac,"verstrichen",mmss(e));
+      if(!S.sub.targetCued && e>=totalSec){ S.sub.targetCued=true; toast("Zielzeit erreicht 🎉"); } });
+    cardioRunningFlat(s,totalSec,s.modality==="bike");
+  } else {
+    // SEGMENTED: count-down per segment
+    S.sub.segIdx=0;
+    S.sub.segDoneSec=0;     // Summe abgeschlossener Segmente
+    cardioSegmentRun(s);
+  }
+}
+function cardioRunningFlat(s,targetSec,isBike){
+  const segs=s.segments||[], seg0=segs[0]||{};
+  const e=UpTimer.elapsed?UpTimer.elapsed():0;
   const frac=Math.min(1,e/targetSec);
+  const targetLabel=segmentTargetLabel(seg0);
   setRun(`<div class="phase-work">
-    <div class="center" style="margin:6px 0"><span class="pill ${(!isBike&&z)?'z2':'work'}">${z?("Ziel "+z.min+"–"+z.max+" · "+z.zone):"Zone 2"}</span></div>
+    <div class="center" style="margin:6px 0"><span class="pill ${seg0.targetHr&&!isBike?'z2':'work'}">${esc(targetLabel)}</span></div>
     <div class="timer" id="upWrap">${ring(frac,"verstrichen",mmss(e))}</div>
     <p class="center muted" style="margin-top:-6px">Ziel ${Math.round(targetSec/60)} min · ${isBike?"Watt/Farbe steuern":"HF führt, nicht das Tempo"}</p>
+    ${seg0.cue?cueBlock(seg0.cue,10):""}
   </div>`);
   setBar(`<div class="btn-row">
-    <button class="btn sec" style="flex:none;width:34%" onclick="cardioPause()">${UpTimer.paused?"Weiter":"Pause"}</button>
-    <button class="btn" onclick="cardioFinish()">Fertig → eintragen</button></div>`);
+    <button class="btn sec" style="flex:none;width:34%" onclick="cardioPauseFlat()">${UpTimer.paused?"Weiter":"Pause"}</button>
+    <button class="btn" onclick="cardioFinishManual()">Fertig → eintragen</button></div>`);
 }
-function cardioPause(){
-  const s=S.spec.steps[S.stepIdx], targetSec=(s.durationMin||30)*60;
-  if(UpTimer.paused){ UpTimer.resume(); if(!S.sub.targetCued){ const rem=targetSec-UpTimer.elapsed(); if(rem>0) scheduleAlarm("done",rem); } }
+function cardioPauseFlat(){
+  const s=S.spec.steps[S.stepIdx], totalSec=cardioTotalMin(s)*60;
+  if(UpTimer.paused){ UpTimer.resume(); if(!S.sub.targetCued){ const rem=totalSec-UpTimer.elapsed(); if(rem>0) scheduleAlarm("done",rem); } }
   else { UpTimer.pause(); clearScheduled(); }
-  cardioRunning(s,targetSec,s.modality==="bike");
+  cardioRunningFlat(s,totalSec,s.modality==="bike");
 }
-function cardioFinish(){
-  const s=S.spec.steps[S.stepIdx]; const elapsed=Math.round(UpTimer.elapsed()); UpTimer.stop();
+function cardioSegmentRun(s){
+  const segs=s.segments||[];
+  const idx=S.sub.segIdx;
+  const seg=segs[idx];
+  if(!seg){ cardioFinishAuto(s); return; }
+  cardioSegmentShow(s);
+  const nextSeg=segs[idx+1];
+  const endKind = nextSeg ? "go" : "done";
+  Timer.start(seg.durationSec,(rem,dur)=>{
+    const w=$("caWrap"); if(w) w.innerHTML=ring(rem/dur,seg.intensity==="hard"?"arbeit":"halten",mmss(rem));
+  },()=>{
+    S.sub.segDoneSec += seg.durationSec;
+    S.sub.segIdx++;
+    cardioSegmentRun(s);
+  },endKind);
+}
+function cardioSegmentShow(s){
+  const segs=s.segments||[];
+  const idx=S.sub.segIdx;
+  const seg=segs[idx];
+  if(!seg) return;
+  const isWork=seg.intensity==="hard";
+  const cls=isWork?"phase-work":"phase-rest";
+  const pillCls=isWork?"work":"rest";
+  const next=segs[idx+1];
+  const totalSec=segs.reduce((a,x)=>a+(x.durationSec||0),0);
+  const elapsedSoFar = (S.sub.segDoneSec||0) + (Timer.dur ? (Timer.dur - (Timer.endsAt-performance.now())/1000) : 0);
+  setRun(`<div class="${cls}">
+    <div class="center" style="margin:6px 0">
+      <span class="pill ${pillCls}">${esc(seg.name||"Segment")} · ${idx+1}/${segs.length}</span>
+    </div>
+    <div class="timer" id="caWrap">${ring(1,isWork?"arbeit":"halten",mmss(seg.durationSec))}</div>
+    <div class="card">
+      ${seg.targetHr?`<div class="kv"><span>Ziel-HF</span><b>${seg.targetHr.min}–${seg.targetHr.max} <span class="muted">${esc(seg.targetHr.zone||"")}</span></b></div>`:""}
+      ${seg.targetWatt?`<div class="kv"><span>Watt</span><b>${seg.targetWatt.min}–${seg.targetWatt.max}</b></div>`:""}
+      ${seg.targetWattColor?`<div class="kv"><span>Farbe</span><b>${esc(seg.targetWattColor)}</b></div>`:""}
+      ${seg.targetRpm?`<div class="kv"><span>RPM</span><b>${seg.targetRpm.min}–${seg.targetRpm.max}</b></div>`:""}
+      ${seg.targetSpm?`<div class="kv"><span>spm</span><b>${seg.targetSpm.min}–${seg.targetSpm.max}</b></div>`:""}
+      ${seg.targetPace?`<div class="kv"><span>Pace</span><b>${esc(seg.targetPace)}</b></div>`:""}
+    </div>
+    ${cueBlock(seg.cue,8)}
+    <p class="center muted" style="font-size:13px;margin-top:6px">Gesamt: ${mmss(Math.max(0,Math.round(elapsedSoFar)))} / ${mmss(totalSec)}${next?(" · Als Nächstes: "+esc(next.name||"Segment "+(idx+2))+" "+mmss(next.durationSec)):""}</p>
+    ${Timer.paused?`<p class="center muted" style="font-size:12.5px;margin-top:4px;font-style:italic">Pausiert · „Beenden" zählt die bisherige Zeit</p>`:""}
+  </div>`);
+  setBar(`<div class="btn-row">
+    <button class="btn sec" style="flex:none;width:34%" onclick="cardioPauseSeg()">${Timer.paused?"Weiter":"Pause"}</button>
+    <button class="btn" onclick="cardioFinishManual()">Beenden → eintragen</button>
+  </div>`);
+}
+function cardioPauseSeg(){ if(Timer.paused) Timer.resume(); else Timer.pause(); cardioSegmentShow(S.spec.steps[S.stepIdx]); }
+function cardioFinishAuto(s){ Timer.stop(); cardioFinish(s,true); }
+function cardioFinishManual(){
+  const s=S.spec.steps[S.stepIdx];
+  const segs=s.segments||[];
+  if(segs.length===1){
+    const elapsed=Math.round(UpTimer.elapsed());
+    UpTimer.stop();
+    S.sub.elapsed=elapsed;
+    cardioFinishForm(s);
+  } else {
+    // Mid-Segment-Stop: bisherige Dauer berechnen
+    const idx=S.sub.segIdx||0;
+    const currentRemain = Timer.dur ? (Timer.endsAt-performance.now())/1000 : 0;
+    const currentSec = segs[idx] ? Math.max(0, segs[idx].durationSec - currentRemain) : 0;
+    const elapsed = Math.round((S.sub.segDoneSec||0) + currentSec);
+    Timer.stop();
+    S.sub.elapsed=elapsed;
+    cardioFinishForm(s);
+  }
+}
+function cardioFinish(s,auto){
+  Timer.stop(); UpTimer.stop();
+  const segs=s.segments||[];
+  S.sub.elapsed = segs.reduce((a,x)=>a+(x.durationSec||0),0);
+  cardioFinishForm(s);
+}
+function cardioFinishForm(s){
+  const elapsed=S.sub.elapsed||0;
+  const segs=s.segments||[];
+  const totalSec=segs.reduce((a,x)=>a+(x.durationSec||0),0);
   const isBike=s.modality==="bike", isRow=s.modality==="row", isRun=s.modality==="run";
-  S.sub.elapsed=elapsed;
+  const isMultiSeg = segs.length>1;
+  // Pro-Segment-Feld: bei Bike Watt, sonst HF (eine Zahl je Segment reicht — die App
+  // schreibt segmentResults[] nur, wenn der User mindestens einen Wert eingetragen hat).
+  const segUnit = isBike ? "Watt" : "HF";
+  const segHelp = isBike ? "Ø-Watt je Segment ablesen (falls erfasst)" : "Ø-HF je Segment ablesen (falls erfasst)";
   setRun(`<div class="eyebrow">${({row:"Rudern",run:"Laufen",bike:"Bike"})[s.modality]}</div>
     <h1 style="margin:4px 0 4px">Werte eintragen</h1>
-    <p class="muted" style="margin-bottom:14px">Zeit gestoppt: <b>${mmss(elapsed)}</b> — vom Gerät ablesen.</p>
+    <p class="muted" style="margin-bottom:14px">Zeit gestoppt: <b>${mmss(elapsed)}</b>${elapsed<totalSec?(" (von "+mmss(totalSec)+")"):""} — vom Gerät ablesen.</p>
     <div class="card">
       <div class="field"><div class="lab">Distanz <span class="hint">${isRun?"km":"Meter"}</span></div>
         <input class="txt tnum" id="cDist" inputmode="decimal" placeholder="${isRow?'z.B. 7000':isRun?'z.B. 6.5':'z.B. 18000'}"></div>
@@ -1184,13 +1533,30 @@ function cardioFinish(){
       ${!isBike?`<div class="field"><div class="lab">Ø-HF <span class="hint">bpm — bestimmt die Zone</span></div>
         <input class="txt tnum" id="cHr" inputmode="numeric" placeholder="z.B. 140" oninput="showZone()"><div id="zoneOut" style="margin-top:8px"></div></div>`:""}
       <div class="field"><div class="lab">Notiz (optional)</div><textarea class="txt" id="exNote"></textarea></div>
-    </div>`);
+    </div>
+    ${isMultiSeg?`<details style="margin-top:14px">
+      <summary class="muted" style="font-size:13.5px;cursor:pointer;padding:6px 0">Pro Segment loggen (optional)</summary>
+      <div class="card" style="margin-top:10px">
+        <p class="muted" style="font-size:12.5px;margin-bottom:8px">${segHelp}. Leer lassen, wenn nur Gesamt-Werte vorliegen — dann wird nichts geloggt.</p>
+        ${segs.map((seg,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:14px">${esc(seg.name||"Segment "+(i+1))}</div>
+            <div class="muted" style="font-size:12px">${mmss(seg.durationSec)}${seg.intensity?(" · "+esc(seg.intensity)):""}</div>
+          </div>
+          <input class="txt tnum" id="seg-val-${i}" inputmode="numeric" placeholder="${segUnit}" style="width:84px;padding:9px 10px;font-size:14px;text-align:center">
+        </div>`).join("")}
+      </div>
+    </details>`:""}`);
   setBar(`<button class="btn good" onclick="saveCardio()">Speichern → weiter</button>`);
 }
 function pickColor(el,c){ document.querySelectorAll("#cColor .chip").forEach(x=>x.classList.remove("on")); el.classList.add("on"); S.sub.color=c; }
 function showZone(){ const hr=Number($("cHr").value); const out=$("zoneOut"); if(!out)return;
   if(!hr){ out.innerHTML=""; return; }
-  const s=S.spec.steps[S.stepIdx], t=s.targetHr;
+  const s=S.spec.steps[S.stepIdx];
+  // v2: Ziel kommt aus dem ersten Segment, wenn nur eins existiert.
+  // Bei mehreren Segmenten ist „in Ziel" mehrdeutig → nur Zone anzeigen, kein Hint.
+  const segs=s.segments||[];
+  const t=(segs.length===1 && segs[0].targetHr) ? segs[0].targetHr : null;
   const inTarget = t && t.min!=null && t.max!=null && hr>=t.min && hr<=t.max;
   const z=zoneForHr(hr), info=z?(hrZones().find(x=>x.z===z)):null;
   const label = info ? `${esc(z)} · ${esc(info.name||"")}` : (t&&t.zone?esc(t.zone):`${hr} bpm`);
@@ -1204,7 +1570,7 @@ function showZone(){ const hr=Number($("cHr").value); const out=$("zoneOut"); if
 function saveCardio(){
   const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
   const v=id=>{const e=$(id);return e&&e.value.trim()?e.value.trim():undefined;};
-  const isRun=s.modality==="run";
+  const isBike=s.modality==="bike", isRun=s.modality==="run";
   let dist=v("cDist");
   let distM = dist!=null ? (isRun ? Math.round(parseFloat(dist)*1000) : Math.round(parseFloat(dist))) : undefined;
   const hr=v("cHr");
@@ -1218,6 +1584,22 @@ function saveCardio(){
     avgHr:hr?Number(hr):undefined, zone:hr?(zoneForHr(Number(hr))||undefined):undefined,
     note:v("exNote")
   };
+  // Per-Segment-Log (v2 optional): nur schreiben, wenn der User mindestens einen Wert eingetragen hat.
+  const segs=s.segments||[];
+  if(segs.length>1){
+    const segRes=[]; let any=false;
+    for(let i=0;i<segs.length;i++){
+      const val=v(`seg-val-${i}`);
+      const entry={durationSec:segs[i].durationSec};
+      if(val){
+        const n=Number(val);
+        if(isBike) entry.avgWatt=n; else entry.avgHr=n;
+        any=true;
+      }
+      segRes.push(entry);
+    }
+    if(any) rs.segmentResults=segRes;
+  }
   rs.status="done";
   if(s.modality==="row" && distM){ S.sub.rowMeters=distM; }
   nextStep();
@@ -1288,15 +1670,22 @@ function renderSummary(rowMeters,before){
       <div class="muted" style="margin-top:4px;font-size:13px">Gesamt: ${after.toLocaleString("de-DE")} m</div></div>`:""}
     ${skipped?`<div class="note" style="margin-bottom:14px">${skipped} Schritt(e) übersprungen — steht im Result für den Coach.</div>`:""}
     <div class="field"><div class="lab">Gesamt-Notiz für den Coach</div>
-      <textarea class="txt" id="sumNote" rows="3" placeholder="Wie war's? Was war zu leicht/schwer?"></textarea></div>
+      <textarea class="txt" id="sumNote" rows="3" placeholder="Wie war's? Was war zu leicht/schwer?" oninput="refreshResultPreview()"></textarea></div>
     <div class="card"><div class="eyebrow" style="margin-bottom:8px">Result-Block</div>
-      <p class="muted" style="font-size:13.5px;margin-bottom:10px">Kopieren und in den Coach-Chat einfügen — der Coach schreibt daraus dein Logbuch.</p>
-      <button class="btn good" onclick="copyResult()">📋 In Zwischenablage kopieren</button>
+      <p class="muted" style="font-size:13.5px;margin-bottom:10px">An den Coach schicken — er schreibt daraus dein Logbuch.</p>
+      ${navigator.share?`<button class="btn good" onclick="shareResult()">📤 Teilen</button>
+        <div style="height:9px"></div>
+        <button class="btn sec sm" onclick="copyResult()">📋 Kopieren</button>`:`<button class="btn good" onclick="copyResult()">📋 Kopieren</button>`}
       <div style="height:9px"></div>
       <button class="btn sec sm" onclick="downloadResult()">Als Datei sichern</button>
+      <details style="margin-top:12px">
+        <summary class="muted" style="font-size:13px;cursor:pointer;padding:4px 0">JSON-Vorschau anzeigen</summary>
+        <pre id="resPreviewBody" class="note" style="font-size:11px;line-height:1.45;overflow-x:auto;margin-top:8px;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;max-height:280px;overflow-y:auto"></pre>
+      </details>
     </div>
     <button class="btn ghost" onclick="restartAll()">Neues Workout laden</button>`);
   setBar(``);
+  refreshResultPreview();
 }
 function milestoneMsg(before,after){
   const marks=[10000,25000,50000,100000,250000,500000,1000000,2000000,5000000];
@@ -1312,14 +1701,43 @@ function resultJSON(){
   // strip transient defaults from spec leftovers
   return "```json\n"+JSON.stringify(S.result,null,2)+"\n```";
 }
-function copyResult(){
+// Bevorzugt das native iOS Share Sheet (Web Share API), fällt zurück auf Clipboard.
+// Vorteil iOS: Direkt-Share in Claude/Mail/Notes/Slack möglich.
+async function shareResult(){
   const txt=resultJSON();
-  const done=()=>{toast("Kopiert ✓ — in den Coach-Chat einfügen");};
-  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>fallbackCopy(txt,done)); }
-  else fallbackCopy(txt,done);
+  if(navigator.share){
+    try{
+      await navigator.share({title:"Workout Result", text:txt});
+      toast("Geteilt ✓");
+      return;
+    }catch(e){
+      if(e && e.name==="AbortError") return;  // User hat abgebrochen
+      // sonst → Fallback unten
+    }
+  }
+  copyToClipboard(txt);
 }
+function copyToClipboard(txt){
+  const done=()=>{toast("Kopiert ✓ — in den Coach-Chat einfügen");};
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(done,()=>fallbackCopy(txt,done));
+  } else { fallbackCopy(txt,done); }
+}
+function copyResult(){ copyToClipboard(resultJSON()); }
 function fallbackCopy(txt,done){ const ta=document.createElement("textarea"); ta.value=txt; ta.style.position="fixed"; ta.style.opacity="0";
-  document.body.appendChild(ta); ta.select(); try{document.execCommand("copy");done();}catch(e){alert("Bitte manuell kopieren.");} document.body.removeChild(ta); }
+  document.body.appendChild(ta); ta.select(); try{document.execCommand("copy");done();}catch(e){toast("Bitte manuell kopieren");} document.body.removeChild(ta); }
+// Preview aktualisieren, wenn der User die Gesamt-Notiz ändert.
+function refreshResultPreview(){
+  const out=$("resPreviewBody");
+  if(!out) return;
+  // Snapshot der summary inkl. aktueller Notiz erzeugen, ohne S.result zu mutieren bevor Save
+  const n=$("sumNote");
+  const note = n ? n.value.trim() : (S.result.summary.overallNotes||"");
+  const snap = JSON.parse(JSON.stringify(S.result));
+  snap.schemaVersion = SCHEMA;
+  if(snap.summary) snap.summary.overallNotes = note;
+  out.textContent = JSON.stringify(snap, null, 2);
+}
 function downloadResult(){
   const n=$("sumNote"); if(n) S.result.summary.overallNotes=n.value.trim(); S.result.schemaVersion=SCHEMA;
   const blob=new Blob([JSON.stringify(S.result,null,2)],{type:"application/json"});
@@ -1351,13 +1769,37 @@ function endShortened(){
   }
   S.screen="summary"; buildSummary("shortened");
 }
-function hardQuit(){ if(confirm("Wirklich verwerfen? Nichts wird gespeichert.")){ clearSaved(); renderImport(); } }
+// Inline-Sheet statt nativem confirm() — irreversibler Schritt, deshalb destruktive Optik.
+function hardQuit(){
+  setRun(`<div style="padding-top:20px">
+    <h1 style="margin-bottom:8px">Wirklich alles verwerfen?</h1>
+    <p class="muted" style="margin-bottom:18px">Alles bisher Getrackte geht verloren. Eine verkürzte Session zählt mehr als eine verworfene — Konsistenz schlägt Perfektion.</p>
+    <div class="card stack-sm">
+      <button class="btn sec" onclick="confirmQuit()">Zurück</button>
+      <button class="btn" style="background:#c92a2a" onclick="reallyHardQuit()">Ja, alles verwerfen</button>
+    </div>
+  </div>`);
+  setBar(``);
+}
+function reallyHardQuit(){ clearSaved(); renderImport(); }
 
 /* ============================================================
    autosave (crash recovery only)
    ============================================================ */
-function saveProgress(){ try{ localStorage.setItem(SAVE_KEY,JSON.stringify({
-  spec:S.spec,result:S.result,stepIdx:S.stepIdx,startedAt:S.startedAt,ts:Date.now()})); }catch(e){} }
+let _saveDisabled=false;
+function saveProgress(){
+  if(_saveDisabled) return;
+  try{
+    localStorage.setItem(SAVE_KEY,JSON.stringify({
+      spec:S.spec,result:S.result,stepIdx:S.stepIdx,startedAt:S.startedAt,ts:Date.now()}));
+  }catch(e){
+    // Quota voll oder localStorage gesperrt (Private Mode) — Auto-Speichern still abschalten,
+    // Session läuft im Speicher weiter, nur Crash-Recovery geht verloren.
+    _saveDisabled=true;
+    try{ localStorage.removeItem(SAVE_KEY); }catch(_){}
+    if(e && e.name==="QuotaExceededError") toast("Auto-Speichern aus (Speicher voll)");
+  }
+}
 function loadSaved(){ try{ const raw=localStorage.getItem(SAVE_KEY); if(!raw)return null;
   const o=JSON.parse(raw); if(!o.spec||Date.now()-o.ts>1000*60*60*8) return null; return o; }catch(e){return null;} }
 function resumeSaved(){ const o=loadSaved(); if(!o)return renderImport();
@@ -1386,10 +1828,12 @@ function loadFromHash(){
   catch(e){ try{ o=JSON.parse(payload); }catch(e2){ o=extractJSON(decodeURIComponent(payload)); } }
   const errs=validateSpec(o);
   if(errs.length){
-    // Hash defekt — Fragment entfernen und normalen Import zeigen
+    // Hash defekt — Fragment entfernen und Import-Screen mit Hinweis zeigen
     try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){}
+    setTimeout(()=>toast("Hash-Link unbrauchbar — bitte Spec manuell einfügen"),300);
     return false;
   }
+  normalizeSpec(o);
   S.spec=o;
   S.result=JSON.parse(JSON.stringify(o));
   S.result.kind="workout-result";
