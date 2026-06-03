@@ -3,20 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#F4F2EC">
+<meta name="theme-color" content="#F4F6F8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Coach Runner</title>
-<link rel="manifest" href='data:application/json,{"name":"Coach Runner","short_name":"Runner","start_url":"./","display":"standalone","background_color":"%23F4F2EC","theme_color":"%23F4F2EC","icons":[{"src":"data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 rx=%2742%27 fill=%27%23E5562C%27/%3E%3Ccircle cx=%2796%27 cy=%2774%27 r=%2734%27 fill=%27none%27 stroke=%27%23F4F2EC%27 stroke-width=%2714%27/%3E%3Crect x=%2766%27 y=%27118%27 width=%2760%27 height=%2722%27 rx=%2711%27 fill=%27%23F4F2EC%27/%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%23E5562C'/%3E%3Ccircle cx='96' cy='74' r='34' fill='none' stroke='%23F4F2EC' stroke-width='14'/%3E%3Crect x='66' y='118' width='60' height='22' rx='11' fill='%23F4F2EC'/%3E%3C/svg%3E">
+<link rel="manifest" href='data:application/json,{"name":"Coach Runner","short_name":"Runner","start_url":"./","display":"standalone","background_color":"%23FFFFFF","theme_color":"%23F4F6F8","icons":[{"src":"data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 rx=%2742%27 fill=%27%232D7DC4%27/%3E%3Crect x=%2780%27 y=%2722%27 width=%2732%27 height=%2715%27 rx=%276%27 fill=%27%23FFFFFF%27/%3E%3Ccircle cx=%2796%27 cy=%27104%27 r=%2752%27 fill=%27none%27 stroke=%27%23FFFFFF%27 stroke-width=%2713%27/%3E%3Cpath d=%27M74 104 l14 16 l28 -34%27 fill=%27none%27 stroke=%27%23FFFFFF%27 stroke-width=%2713%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml","purpose":"any maskable"}]}'>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%232D7DC4'/%3E%3Crect x='80' y='22' width='32' height='15' rx='6' fill='%23FFFFFF'/%3E%3Ccircle cx='96' cy='104' r='52' fill='none' stroke='%23FFFFFF' stroke-width='13'/%3E%3Cpath d='M74 104 l14 16 l28 -34' fill='none' stroke='%23FFFFFF' stroke-width='13' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
 :root{
-  --paper:#F4F2EC; --card:#FFFFFF; --ink:#1A1813; --muted:#8C887C;
-  --line:#E5E1D6; --line-strong:#D6D1C4;
-  --accent:#E5562C; --accent-ink:#B53C18; --accent-soft:#FBE7DE;
-  --rest:#1F8A8A; --rest-soft:#DCF0EF;
-  --good:#2C9645; --good-soft:#E0F0E3;
-  --shadow:0 1px 2px rgba(26,24,19,.04),0 4px 16px rgba(26,24,19,.05);
+  --paper:#F4F6F8; --card:#FFFFFF; --ink:#2E3338; --muted:#7E868C;
+  --line:#E8EAED; --line-strong:#D5DADE;
+  /* Primärfarbe (Buttons, Fortschritt, Links) — concept2-Blau */
+  --accent:#2D7DC4; --accent-ink:#1F5E97; --accent-soft:#E2EEF8;
+  /* Phasen-Farben: Arbeit warm, Pause blau, Mobility ruhiges Grün */
+  --work:#E5562C; --work-ink:#B53C18; --work-soft:#FBE7DE;
+  --rest:#2D7DC4; --rest-ink:#1F5E97; --rest-soft:#E2EEF8;
+  --mob:#2E9E7B; --mob-ink:#1F7A5E; --mob-soft:#DCF1EA;
+  --good:#2E9E7B; --good-soft:#DCF1EA;
+  --shadow:0 1px 2px rgba(35,40,46,.04),0 4px 16px rgba(35,40,46,.06);
   --r:18px; --r-sm:12px;
   --safe-b:env(safe-area-inset-bottom,0px);
 }
@@ -30,9 +34,48 @@ body{
 }
 .tnum{font-variant-numeric:tabular-nums}
 #app{max-width:520px;margin:0 auto;height:100%;min-height:100%;display:flex;flex-direction:column}
+#main{display:contents}            /* mobil: topbar/screen/actionbar bleiben Flex-Kinder von #app */
+.rail{display:none}                /* mobil + schmaler Desktop: keine Seitenspalten */
 #topbar:empty{display:none}
 #actionbar:empty{display:none}
 .scroll{flex:1;overflow-y:auto;padding:20px 18px 140px;-webkit-overflow-scrolling:touch}
+
+/* ---- Seitenspalten (Verlauf links / Hinweise rechts) ---- */
+.rail-head{font-size:13px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+.rail-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:var(--shadow)}
+.rail-card .note{margin-bottom:0}
+.rail-title{font-weight:750;font-size:15px;margin-top:6px}
+.rail-empty{font-size:13px;padding:4px 2px}
+.vl{display:flex;flex-direction:column;gap:1px}
+.vl-item{display:flex;gap:11px;padding:9px 8px;border-radius:11px;align-items:flex-start;cursor:pointer}
+.vl-item:hover{background:var(--paper)}
+.vl-item:active{transform:scale(.99)}
+.vl-cur{background:var(--accent-soft)}
+.vl-cur:hover{background:var(--accent-soft)}
+.vl-dot{width:24px;height:24px;flex:none;border-radius:7px;display:grid;place-items:center;
+  font-size:12px;font-weight:800;background:var(--paper);color:var(--muted);border:1px solid var(--line)}
+.vl-done .vl-dot{background:var(--good);color:#fff;border-color:transparent}
+.vl-skip .vl-dot{background:var(--line-strong);color:#fff;border-color:transparent}
+.vl-cur  .vl-dot{background:var(--accent);color:#fff;border-color:transparent}
+.vl-title{font-size:14px;font-weight:650;line-height:1.25}
+.vl-cur .vl-title{font-weight:800}
+.vl-todo .vl-title{color:var(--muted)}
+.vl-meta{font-size:11.5px;color:var(--muted);margin-top:1px}
+
+/* ---- Desktop: drei Spalten, nur während eines laufenden Workouts ---- */
+@media (min-width:980px){
+  body.run-mode #app{max-width:1340px;display:grid;
+    grid-template-columns:320px minmax(0,1fr) 384px;gap:20px;padding:0 14px;
+    height:100%;align-items:stretch}
+  body.run-mode #main{display:flex;flex-direction:column;min-width:0;height:100%}
+  body.run-mode .rail{display:block;height:100%;overflow-y:auto;padding:24px 2px 30px}
+  body.run-mode .scroll{padding:24px 6px 28px}
+  body.run-mode .topbar{position:static}
+  body.run-mode .actionbar{position:static;left:auto;right:auto;max-width:none;margin:0;
+    padding:16px 6px calc(20px + var(--safe-b));background:none;border-top:1px solid var(--line)}
+  body.run-mode .disc{display:none}        /* Hinweis lebt auf dem Desktop in der rechten Spalte */
+  body.run-mode .last-note{display:none}   /* "Letztes Mal" ebenso → rechte Spalte */
+}
 
 /* ---- typography ---- */
 .eyebrow{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
@@ -41,6 +84,9 @@ h2{font-size:19px;font-weight:750;letter-spacing:-.01em}
 .big-num{font-weight:800;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
 .muted{color:var(--muted)}
 .center{text-align:center}
+/* Übungs-Titel im Run: kompakter als h1, max. 2 Zeilen statt unkontrolliertem Umbruch */
+.run-title{font-size:21px;font-weight:800;letter-spacing:-.02em;line-height:1.2;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 
 /* ---- top bar ---- */
 .topbar{position:sticky;top:0;z-index:20;background:var(--paper);
@@ -114,15 +160,18 @@ textarea.txt{resize:vertical;min-height:64px}
 .timer .ring svg{position:absolute;inset:0;transform:rotate(-90deg)}
 .timer .ring .t-val{font-size:62px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
 .timer .ring .t-sub{font-size:13px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
-.phase-work .ring circle.fg{stroke:var(--accent)}
+.phase-work .ring circle.fg{stroke:var(--work)}
 .phase-rest .ring circle.fg{stroke:var(--rest)}
-.phase-work .t-sub{color:var(--accent-ink)}
-.phase-rest .t-sub{color:var(--rest)}
+.phase-mob  .ring circle.fg{stroke:var(--mob)}
+.phase-work .t-sub{color:var(--work-ink)}
+.phase-rest .t-sub{color:var(--rest-ink)}
+.phase-mob  .t-sub{color:var(--mob-ink)}
 
 .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:99px;
-  font-size:13px;font-weight:700;background:var(--paper);border:1px solid var(--line)}
-.pill.work{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}
-.pill.rest{background:var(--rest-soft);color:var(--rest);border-color:transparent}
+  font-size:13px;font-weight:700;background:var(--card);border:1px solid var(--line)}
+.pill.work{background:var(--work-soft);color:var(--work-ink);border-color:transparent}
+.pill.rest{background:var(--rest-soft);color:var(--rest-ink);border-color:transparent}
+.pill.mob{background:var(--mob-soft);color:var(--mob-ink);border-color:transparent}
 .pill.z2{background:var(--good-soft);color:var(--good);border-color:transparent}
 
 .kv{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:15px}
@@ -130,7 +179,7 @@ textarea.txt{resize:vertical;min-height:64px}
 .kv b{font-weight:750}
 .tag{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
   padding:4px 9px;border-radius:7px;background:var(--accent-soft);color:var(--accent-ink)}
-.tag.row{background:var(--rest-soft);color:var(--rest)}
+.tag.row{background:var(--mob-soft);color:var(--mob-ink)}
 .tag.done{background:var(--good-soft);color:var(--good)}
 
 .stack-sm > * + *{margin-top:8px}
@@ -139,13 +188,23 @@ textarea.txt{resize:vertical;min-height:64px}
 .set-row .n{width:26px;height:26px;flex:none;border-radius:7px;background:var(--paper);display:grid;place-items:center;font-weight:800;font-size:13px;color:var(--muted)}
 .set-row .n.ok{background:var(--good);color:#fff}
 
+/* einklappbarer Hinweis (i) — hält den Cue aus dem Weg, bis er gebraucht wird */
+.disc{margin-bottom:14px}
+.disc-toggle{display:inline-flex;align-items:center;gap:7px;background:var(--accent-soft);
+  color:var(--accent-ink);border:none;border-radius:99px;padding:8px 14px;font-size:13px;
+  font-weight:700;cursor:pointer}
+.disc-toggle:active{filter:brightness(.97)}
+.disc-caret{font-size:10px;opacity:.7}
+.disc-body{display:none;margin-top:9px}
+.disc.open .disc-body{display:block}
+
 .toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:#fff;
   padding:11px 18px;border-radius:99px;font-size:14px;font-weight:600;z-index:60;opacity:0;transition:opacity .25s;pointer-events:none;white-space:nowrap}
 .toast.show{opacity:1}
 
 .divider{height:1px;background:var(--line);margin:16px 0}
 .note{font-size:13.5px;color:var(--muted);background:var(--paper);border-radius:12px;padding:11px 13px;border:1px solid var(--line)}
-.celebrate{background:linear-gradient(135deg,var(--accent),#F2811B);color:#fff;border:none}
+.celebrate{background:linear-gradient(135deg,var(--accent),#1F5E97);color:#fff;border:none}
 .celebrate .eyebrow,.celebrate .muted{color:rgba(255,255,255,.85)}
 .hidden{display:none!important}
 a{color:var(--accent-ink)}
@@ -153,23 +212,32 @@ a{color:var(--accent-ink)}
 </style>
 </head>
 <body>
-<div id="app"><div id="topbar"></div><div class="scroll" id="screen"></div></div>
-<div id="actionbar" class="actionbar"></div>
+<div id="app">
+  <aside id="railL" class="rail"></aside>
+  <main id="main">
+    <div id="topbar"></div>
+    <div class="scroll" id="screen"></div>
+    <div id="actionbar" class="actionbar"></div>
+  </main>
+  <aside id="railR" class="rail"></aside>
+</div>
 <div id="toast" class="toast"></div>
 
 <script>
 "use strict";
 /* ============================================================
    Coach Runner  —  rendert workout-spec, gibt workout-result
-   Single file, vanilla JS, offline-tauglich. schemaVersion 2.
+   Single file, vanilla JS, offline-tauglich. schemaVersion 3.
 
    Änderungen v1 → v2:
    - cardio strukturiert via segments[] (statt flachem durationMin+targetHr)
    - circuit.stations[] akzeptiert distanceM (z.B. 30m Carry als Station)
    - v1-Specs werden automatisch beim Import auf v2 normalisiert
+   Änderungen v2 → v3 (rein additiv, abwärtskompatibel):
+   - optionales cuePinned:true je Übung → Hinweis startet aufgeklappt statt hinter (i)
    ============================================================ */
 
-const SCHEMA = 2;
+const SCHEMA = 3;
 const SAVE_KEY = "coachRunner.session.v2";   // v1-Bucket bewusst gewechselt, damit alte localStorage-Sessions keine Crash-Recovery auslösen
 const WD = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
 
@@ -201,8 +269,8 @@ const $ = id => document.getElementById(id);
 const screenEl = $("screen"), barEl = $("actionbar"), toastEl = $("toast"), topEl = $("topbar");
 function h(html){ return html; }
 function setTop(html){ topEl.innerHTML = html || ""; }
-function setScreen(html){ setTop(""); screenEl.innerHTML = html; screenEl.scrollTop = 0; }
-function setRun(html){ setTop(topbar()); screenEl.innerHTML = html; screenEl.scrollTop = 0; }
+function setScreen(html){ setTop(""); screenEl.innerHTML = html; screenEl.scrollTop = 0; renderRails(); }
+function setRun(html){ setTop(topbar()); screenEl.innerHTML = html; screenEl.scrollTop = 0; renderRails(); }
 function setBar(html){ barEl.innerHTML = html; }
 let toastT;
 function toast(msg){ toastEl.textContent=msg; toastEl.classList.add("show");
@@ -226,6 +294,27 @@ function cueBlock(cue,mb){
   return `<div class="note" style="${style}">💡 ${esc(cue)}</div>`;
 }
 function mmss(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60),s=sec%60; return m+":"+String(s).padStart(2,"0"); }
+/* Mehrere Cue-Quellen (String|Array|null) zu einer flachen Liste zusammenführen. */
+function mergeCues(...cs){
+  const out=[];
+  cs.forEach(c=>{ if(c==null)return;
+    if(Array.isArray(c)) c.forEach(x=>{ if(x!=null&&String(x).trim()!=="")out.push(x); });
+    else if(String(c).trim()!=="") out.push(c); });
+  return out.length?out:null;
+}
+/* Einklappbarer Hinweis (i). Offen-Default = cuePinned (Schema v3); sonst hinter Toggle.
+   Zustand lebt in S.sub.cueOpen für die Dauer des Schritts (übersteht das Re-Render je Satz). */
+function cueDisclosure(cue,pinned){
+  const body=cueBlock(cue,0);
+  if(!body) return "";
+  if(S.sub.cueOpen==null) S.sub.cueOpen=!!pinned;
+  const open=S.sub.cueOpen;
+  return `<div class="disc ${open?'open':''}" style="margin-top:12px">
+    <button type="button" class="disc-toggle" onclick="toggleCue()">
+      <span>ℹ︎ Hinweis</span><span class="disc-caret">${open?'▲':'▼'}</span></button>
+    <div class="disc-body">${body}</div></div>`;
+}
+function toggleCue(){ S.sub.cueOpen=!S.sub.cueOpen; renderStep(); }
 
 /* ---------- audio ----------
    iOS suspendiert den AudioContext aggressiv (Screen-Lock, Hintergrund,
@@ -278,29 +367,47 @@ function ensureAudio(){
     try{ AC=null; _bus=null; audioReady=false; unlockAudio(); }catch(_){}
   }
 }
-// einen Oszillator-Ton zu absoluter Audio-Zeit t0 planen und zurückgeben
+// Eine "Stimme" zur absoluten Audio-Zeit t0, im Charakter klassischer Box-/Interval-Timer:
+// satter Sinus-Grundton + Rechteck-Kante (Durchsetzung) + leise Sub-Oktave (Wucht), alles
+// durch einen Tiefpass, der die schrillen Obertöne kappt → kräftig statt hell/dünn. Hüllkurve
+// mit kurzem "Halten" gibt dem Beep Körper. Gibt ALLE Oszillatoren zurück, damit Pause/Skip
+// (clearScheduled) sie zuverlässig stoppen können.
 function _osc(freq,t0,dur,vol,type){
-  const o=AC.createOscillator(), g=AC.createGain();
-  o.type=type||"sine"; o.frequency.setValueAtTime(freq,t0);
+  const g=AC.createGain();
   const v=Math.min(0.95,(vol||0.2)*VOL);   // Boost + Schutz-Clamp; Limiter im Bus fängt Spitzen
+  const mid=Math.min(dur*0.55, Math.max(0.04, dur-0.04));
   g.gain.setValueAtTime(0.0001,t0);
-  g.gain.exponentialRampToValueAtTime(v,t0+0.012);
-  g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
-  o.connect(g); g.connect(_bus||AC.destination);
-  o.start(t0); o.stop(t0+dur+0.03);
-  return o;
+  g.gain.exponentialRampToValueAtTime(v,t0+0.010);          // schneller, klickfreier Anstieg
+  g.gain.exponentialRampToValueAtTime(v*0.55,t0+mid);       // kurzes Halten → Körper/Wucht
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);       // sattes Ausklingen
+  const lp=AC.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=2600; lp.Q.value=0.6;
+  lp.connect(g); g.connect(_bus||AC.destination);
+  const oscs=[];
+  const add=(f,wave,gain)=>{
+    const o=AC.createOscillator(); o.type=wave; o.frequency.setValueAtTime(f,t0);
+    const og=AC.createGain(); og.gain.value=gain;
+    o.connect(og); og.connect(lp); o.start(t0); o.stop(t0+dur+0.05); oscs.push(o);
+  };
+  add(freq,"sine",0.78);      // satter Grundton
+  add(freq,"square",0.42);    // Rechteck-Kante → setzt sich durch
+  add(freq/2,"sine",0.22);    // Sub-Oktave → Wucht/Tiefe
+  return oscs;
 }
 // sofortiger Ton — für Start-Cues, während die App im Vordergrund ist
 function tone(freq,startSec,dur,vol=0.22,type="sine"){
   if(!AC) return; try{ _osc(freq,AC.currentTime+startSec,dur,vol,type); }catch(e){}
 }
-// motivierende Cues (Beginn einer Phase)
-function cueWork(){ ensureAudio(); tone(660,0,.12,.28); tone(880,.11,.12,.30); tone(1175,.22,.20,.34); vibrate([50,40,90]); }
-function cueRest(){ ensureAudio(); tone(620,0,.16,.20); tone(470,.13,.22,.17); vibrate(70); }
-function cueDone(){ ensureAudio(); tone(660,0,.11,.30); tone(880,.11,.11,.30); tone(1175,.22,.12,.32); tone(1568,.36,.28,.36); vibrate([80,50,80,50,160]); }
-function cueSoft(){ ensureAudio(); tone(440,0,.22,.10); tone(560,.10,.20,.09); vibrate(40); }
-// Anläuten zu Beginn eines Übergangs ("gleich geht's los") — helles Doppel-Glöckchen
-function cueAnnounce(){ ensureAudio(); tone(988,0,.18,.32); tone(1319,.16,.26,.40); vibrate([60,40,60]); }
+// motivierende Cues (Beginn einer Phase) — kräftige, tiefere Lage (Box-Timer-Charakter)
+// Arbeit: satter "GO" auf A5, kurzer Lift nach B5 — energisch, nicht schrill
+function cueWork(){ ensureAudio(); tone(880,0,.30,.46); tone(988,.26,.26,.42); vibrate([50,40,110]); }
+// Pause: A5 → D5 abwärts — kräftiger Einsatz, dann ruhig
+function cueRest(){ ensureAudio(); tone(880,0,.26,.36); tone(587,.24,.34,.28); vibrate(70); }
+// Fertig: aufsteigendes E–A–C (E5–A5–C6) — voll & belohnend
+function cueDone(){ ensureAudio(); tone(659,0,.16,.36); tone(880,.16,.18,.40); tone(1047,.34,.44,.46); vibrate([80,55,80,55,180]); }
+// Mobility-Ende: tiefe, ruhige Quinte (G4 + D5) — bewusst zart
+function cueSoft(){ ensureAudio(); tone(392,0,.32,.12); tone(587,.16,.30,.10); vibrate(40); }
+// Anläuten zu Beginn eines Übergangs ("gleich geht's los") — kräftiges Ding-Ding (D5→A5)
+function cueAnnounce(){ ensureAudio(); tone(587,0,.18,.34); tone(880,.17,.30,.42); vibrate([50,40,60]); }
 function vibrate(p){ if(navigator.vibrate) try{navigator.vibrate(p);}catch(e){} }
 
 /* ---------- vorab geplanter End-Alarm ----------
@@ -314,20 +421,23 @@ function vibrate(p){ if(navigator.vibrate) try{navigator.vibrate(p);}catch(e){} 
 let _sched=[];
 function clearScheduled(){ _sched.forEach(o=>{ try{o.stop(0);}catch(e){} try{o.disconnect();}catch(e){} }); _sched=[]; }
 function schedTone(freq,atSec,dur,vol,type){
-  if(!AC) return; try{ _sched.push(_osc(freq,AC.currentTime+Math.max(0,atSec),dur,vol,type)); }catch(e){}
+  if(!AC) return; try{ _osc(freq,AC.currentTime+Math.max(0,atSec),dur,vol,type).forEach(o=>_sched.push(o)); }catch(e){}
 }
+// Hintergrund-sichere Gegenstücke zu den cue*-Motiven (identische Notenwahl).
+// go/rest beginnen bei Null mit kräftigem A5 — höher als die "1" (G5) → klarer Null-Akzent.
 const ALARM={
-  go:  [[660,0,.12,.30],[880,.12,.12,.30],[1175,.24,.20,.34]],
-  rest:[[620,0,.16,.20],[470,.13,.22,.17]],
-  done:[[660,0,.11,.30],[880,.12,.11,.30],[1175,.24,.12,.32],[1568,.40,.30,.36]],
-  soft:[[440,0,.22,.10],[560,.10,.20,.09]],
+  go:  [[880,0,.30,.46],[988,.26,.26,.42]],                      // satter GO + Lift
+  rest:[[880,0,.26,.36],[587,.24,.34,.28]],                      // kräftig, dann abwärts
+  done:[[659,0,.16,.36],[880,.16,.18,.40],[1047,.34,.44,.46]],   // voll & belohnend
+  soft:[[392,0,.32,.12],[587,.16,.30,.10]],                      // tiefe, ruhige Quinte
 };
 // kind: "go" | "rest" | "done" | "soft" — Ton ans Ende eines durSec-Timers legen
 function scheduleAlarm(kind,durSec){
   clearScheduled(); ensureAudio();
   if(!AC || !(durSec>0)) return;
-  // 3-2-1-Countdown kurz vor Schluss (steigende Tonhöhe) — bei "soft" (Mobility) bewusst ohne, damit Holds ruhig bleiben
-  if(kind!=="soft") [3,2,1].forEach(n=>{ if(durSec>n+0.25) schedTone(n===1?1320:760, durSec-n, .12, .42); });
+  // 3-2-1-Countdown kurz vor Schluss (ansteigend D5–E5–G5) — bei "soft" (Mobility) bewusst ohne, damit Holds ruhig bleiben.
+  // Die "0" selbst ist der kräftige erste Motiv-Ton (A5), liegt eine Stufe über der "1" (G5).
+  if(kind!=="soft") [3,2,1].forEach(n=>{ if(durSec>n+0.25) schedTone({3:587,2:659,1:784}[n], durSec-n, .12, .36); });
   (ALARM[kind]||ALARM.go).forEach(([f,off,d,v])=>schedTone(f, durSec+off, d, v));
 }
 
@@ -612,6 +722,83 @@ function topbar(){
       <div class="bar"><i style="width:${frac*100}%"></i></div>
     </div></div>`;
 }
+/* ---------- Desktop-Seitenspalten (Verlauf + Hinweise) ----------
+   Aus dem aktuellen State abgeleitet, unabhängig von den Step-Render-Funktionen.
+   Auf Mobil per CSS ausgeblendet; das Grid wird nur im run-mode scharf. */
+function renderRails(){
+  const run = S.screen==="run";
+  document.body.classList.toggle("run-mode", run);
+  const L=$("railL"), R=$("railR"); if(!L||!R) return;
+  if(!run || !S.spec || !S.spec.steps){ L.innerHTML=""; R.innerHTML=""; return; }
+  L.innerHTML=railVerlauf(); R.innerHTML=railHinweise();
+}
+// Direktsprung über die Verlaufs-Navigation. Geloggte Daten in S.result bleiben erhalten;
+// nur der transiente Schritt-Fortschritt (S.sub) wird zurückgesetzt — wie bei prev/skip.
+function gotoStep(k){
+  if(!S.spec || !S.spec.steps) return;
+  if(k<0 || k>=S.spec.steps.length || k===S.stepIdx) return;
+  preserveScreenState();
+  Timer.stop(); UpTimer.stop();
+  S.sub={};
+  S.stepIdx=k;
+  saveProgress();
+  renderStep();
+}
+// linke Spalte: kompletter Ablauf mit Status (erledigt / aktuell / übersprungen / kommt noch)
+function railVerlauf(){
+  const steps=S.spec.steps, i=S.stepIdx, m=S.spec.meta||{};
+  const items=steps.map((s,k)=>{
+    const rs=(S.result&&S.result.steps&&S.result.steps[k])||{};
+    let st;
+    if(rs.status==="skipped") st="skip";
+    else if(rs.status==="done"||k<i) st="done";
+    else if(k===i) st="cur";
+    else st="todo";
+    const icon = st==="done"?"✓" : st==="skip"?"–" : st==="cur"?"▸" : (k+1);
+    const meta=stepMetaShort(s);
+    return `<div class="vl-item vl-${st}" onclick="gotoStep(${k})" role="button" title="Zu diesem Schritt springen">
+      <div class="vl-dot">${icon}</div>
+      <div style="min-width:0">
+        <div class="vl-title">${esc(stepTitle(s))}</div>
+        <div class="vl-meta">${esc(focusTag(s))}${meta?(" · "+meta):""}</div>
+      </div></div>`;
+  }).join("");
+  return `<div class="rail-head">${esc(m.focus||"Ablauf")}</div>
+    <div class="muted" style="font-size:12px;margin:-6px 0 12px;font-weight:600">Schritt ${i+1} / ${steps.length}</div>
+    <div class="vl">${items}</div>`;
+}
+// rechte Spalte: Hinweise/Infos zum aktuellen Schritt
+function railHinweise(){
+  const s=S.spec.steps[S.stepIdx]; if(!s) return "";
+  const cueHtml=cueBlock(currentStepCue(),0);
+  const lt=(s.type==="strength"||s.type==="superset"||s.type==="plyo")?s.lastTime:null;
+  const parts=[];
+  if(lt) parts.push(`<div class="rail-card"><div class="eyebrow" style="margin-bottom:6px">Letztes Mal</div>
+    <div style="font-size:14px;line-height:1.4">↩ ${esc(lt)}</div></div>`);
+  if(cueHtml) parts.push(`<div class="rail-card">${cueHtml}</div>`);
+  const body = parts.length ? parts.join("")
+    : `<div class="rail-empty muted">Kein spezieller Hinweis für diesen Schritt.</div>`;
+  return `<div class="rail-head">Hinweise</div>${body}`;
+}
+// Cue des gerade aktiven Teils (berücksichtigt aktuelle Übung/Phase/Segment)
+function currentStepCue(){
+  const s=S.spec.steps[S.stepIdx], rs=(S.result&&S.result.steps&&S.result.steps[S.stepIdx])||{};
+  if(!s) return null;
+  if(s.type==="superset"){
+    const exN=(s.exercises||[]).length||1, done=(rs.log?rs.log.length:0);
+    const ex=(s.exercises||[])[done%exN]||(s.exercises||[])[0];
+    return mergeCues(ex&&ex.cue, s.cue);
+  }
+  if(s.type==="cardio"){
+    const segs=s.segments||[], seg=segs[S.sub.segIdx||0];
+    return mergeCues(seg&&seg.cue, s.cue, s.note);
+  }
+  if(s.type==="interval"||s.type==="circuit"||s.type==="mobility"){
+    const ph=S.sub.phases, p=ph&&ph[S.sub.pi||0];
+    return mergeCues(p&&p.cue, s.cue, s.note);
+  }
+  return mergeCues(s.cue, s.note);
+}
 // Kann ich überhaupt zurück? Entweder gibt es vorherige Schritte ODER innerhalb des
 // aktuellen Schritts existiert Mikro-State (Log-Einträge, Phase-Index, Cardio-Segment).
 function canGoBack(){
@@ -814,16 +1001,16 @@ function renderStrength(s){
      <span>${l.reps} Wdh${l.load?(" · "+l.load+" kg"):""}</span><b class="muted" style="margin-left:auto">RIR ${l.rir}</b></div>`).join("");
   setRun(`
     <div class="eyebrow">Satz ${setNo+1} von ${s.sets} ${s.load&&s.load.perHand?"· je Seite":""}</div>
-    <h1 style="margin:4px 0 2px">${esc(s.name)}</h1>
-    <p class="muted" style="margin-bottom:14px">
+    <h2 class="run-title" style="margin:4px 0 4px">${esc(s.name)}</h2>
+    <p class="muted" style="margin-bottom:12px">
       Ziel ${esc(repText(s.repTarget))} Wdh${s.load?(" · "+esc(s.load.text||(s.load.kg+" kg"))):""} · RIR ${esc(s.rirTarget)}</p>
-    ${cueBlock(s.cue)}
-    ${s.lastTime?`<div class="note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
     <div class="card">
       ${stepperField("Wiederholungen","reps",1,"Wdh")}
       ${isBW?"":loadField(s)}
       ${stepperField("RIR (Reserve)","rir",1,"RIR",0,6)}
     </div>
+    ${cueDisclosure(s.cue,s.cuePinned)}
+    ${s.lastTime?`<div class="note last-note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
     ${done?`<div class="card"><div class="eyebrow" style="margin-bottom:4px">Erledigt</div>${done}</div>`:""}`);
   setBar(`<div class="btn-row">
       <button class="btn sec sm" style="flex:none;width:46%" onclick="skipExercise()">Übung überspringen</button>
@@ -925,17 +1112,16 @@ function renderPlyo(s){
   const loadLabel = hasLoad ? (" · "+esc(s.load.text||(s.load.kg+" kg"))) : (s.load&&s.load.text?(" · "+esc(s.load.text)):"");
   setRun(`
     <div class="eyebrow">Satz ${setNo+1} von ${s.sets} · Sprungkraft</div>
-    <h1 style="margin:4px 0 2px">${esc(s.name)}</h1>
+    <h2 class="run-title" style="margin:4px 0 4px">${esc(s.name)}</h2>
     <p class="muted" style="margin-bottom:12px">
       Ziel ${esc(repText(s.repTarget))} Wdh${s.boxHeightCm?(" · Box "+s.boxHeightCm+" cm"):""}${loadLabel}</p>
-    <div class="note" style="margin-bottom:14px">⚡ Explosiv, sauber landen — volle Erholung zwischen den Sätzen, <b>nicht</b> bis zur Erschöpfung.</div>
-    ${cueBlock(s.cue)}
-    ${s.note?`<div class="note" style="margin-bottom:14px">${esc(s.note)}</div>`:""}
-    ${s.lastTime?`<div class="note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
     <div class="card">
       ${stepperField("Wiederholungen","reps",1,"Wdh")}
       ${hasLoad?plyoLoadField():""}
     </div>
+    <div class="note" style="margin:12px 0">⚡ Explosiv, sauber landen — volle Erholung zwischen den Sätzen, <b>nicht</b> bis zur Erschöpfung.</div>
+    ${cueDisclosure(mergeCues(s.cue,s.note),s.cuePinned)}
+    ${s.lastTime?`<div class="note last-note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
     ${done?`<div class="card"><div class="eyebrow" style="margin-bottom:4px">Erledigt</div>${done}</div>`:""}`);
   setBar(`<div class="btn-row">
       <button class="btn sec sm" style="flex:none;width:46%" onclick="skipExercise()">Übung überspringen</button>
@@ -997,18 +1183,18 @@ function renderSuperset(s){
   const defRir =prev?prev.rir :(ex.rirTarget!=null?ex.rirTarget:2);
   if(S.sub.reps==null){ S.sub.reps=defReps; S.sub.load=defLoad; S.sub.rir=defRir; }
   const bw = ex.load && /bw|körper|body/i.test(ex.load.text||"");
+  const firstSlot = round===0&&exI===0;
   setRun(`
     <div class="eyebrow">Runde ${round+1}/${s.rounds} · Übung ${exI+1}/${exN}</div>
-    <h1 style="margin:4px 0 2px">${esc(ex.name)}</h1>
-    <p class="muted" style="margin-bottom:14px">Ziel ${esc(repText(ex.repTarget))} Wdh${ex.load?(" · "+esc(ex.load.text||(ex.load.kg+" kg"))):""}${ex.rirTarget!=null?(" · RIR "+ex.rirTarget):""}</p>
-    ${cueBlock(ex.cue)}
-    ${s.cue&&round===0&&exI===0?cueBlock(s.cue):""}
-    ${s.lastTime&&round===0&&exI===0?`<div class="note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
+    <h2 class="run-title" style="margin:4px 0 4px">${esc(ex.name)}</h2>
+    <p class="muted" style="margin-bottom:12px">Ziel ${esc(repText(ex.repTarget))} Wdh${ex.load?(" · "+esc(ex.load.text||(ex.load.kg+" kg"))):""}${ex.rirTarget!=null?(" · RIR "+ex.rirTarget):""}</p>
     <div class="card">
       ${stepperField("Wiederholungen","reps",1,"Wdh")}
       ${bw?"":loadField2(ex)}
       ${ex.rirTarget!=null?stepperField("RIR","rir",1,"RIR",0,6):""}
-    </div>`);
+    </div>
+    ${cueDisclosure(mergeCues(ex.cue, firstSlot?s.cue:null), ex.cuePinned||(firstSlot&&s.cuePinned))}
+    ${s.lastTime&&firstSlot?`<div class="note last-note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}`);
   const isLastInRound = exI===exN-1;
   setBar(`<button class="btn" onclick="logSuperset(${isLastInRound})">${isLastInRound&&round+1<s.rounds?"Runde fertig → Pause":"Erledigt"}</button>`);
 }
@@ -1086,7 +1272,32 @@ function intervalShow(s){
       <button class="btn" onclick="ivSkip()">Phase überspringen</button></div>`);
   }
 }
-function ivStart(){ S.sub.running=true; const p=S.sub.phases[S.sub.pi]; if(p)(p.kind==="work"?cueWork():cueRest()); runPhase(); }
+const IV_PREP=5; // Sekunden "Bereitmachen" vor dem Intervall-Start (desynct EMOM nicht – nur einmal vorweg)
+// Start (oder Wiederaufnahme nach Zurück): erst 5s Countdown, dann die erste Phase.
+function ivStart(){ S.sub.running=true; const p=S.sub.phases[S.sub.pi]; if(p) ivPrep(p); else runPhase(); }
+function ivPrepShow(s,p,sec){
+  const cls=p.kind==="work"?"phase-work":"phase-rest";
+  setRun(`<div class="${cls}">
+    <div class="center" style="margin:6px 0 2px">
+      <span class="pill ${p.kind==='work'?'work':'rest'}">Gleich geht's los · ${s.scheme.toUpperCase()}</span>
+    </div>
+    <h1 class="center" style="margin:10px 0 0;font-size:24px">${esc(p.move||(p.kind==='rest'?'Pause':''))}</h1>
+    <div class="timer" id="ivWrap">${ring(1,"bereitmachen",mmss(sec))}</div>
+    ${p.kind==='work'?cueBlock(s.cue,10):""}
+  </div>`);
+  setBar(`<div class="btn-row">
+    <button class="btn sec" style="flex:none;width:34%" onclick="ivPause()">${Timer.paused?"Weiter":"Pause"}</button>
+    <button class="btn" onclick="ivSkipPrep()">Jetzt starten</button></div>`);
+}
+function ivPrep(p){
+  const s=S.spec.steps[S.stepIdx];
+  S.sub.inPrep=true;
+  cueAnnounce();                                  // "gleich geht's los"
+  ivPrepShow(s,p,IV_PREP);
+  Timer.start(IV_PREP,(rem,dur)=>{ const w=$("ivWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
+    ()=>{ S.sub.inPrep=false; runPhase(); }, "go");  // "go"-Alarm (inkl. 3-2-1-0) liegt am Prep-Ende = Arbeitsstart
+}
+function ivSkipPrep(){ Timer.stop(); S.sub.inPrep=false; const p=S.sub.phases[S.sub.pi]; if(p)(p.kind==="work"?cueWork():cueRest()); runPhase(); }
 function runPhase(){
   const s=S.spec.steps[S.stepIdx], ph=S.sub.phases, p=ph[S.sub.pi];
   if(!p) return intervalLog(s);
@@ -1096,7 +1307,10 @@ function runPhase(){
   Timer.start(p.sec,(rem,dur)=>{ const w=$("ivWrap"); if(w)w.innerHTML=ring(rem/dur,p.kind==='work'?"arbeit":"pause",mmss(rem)); },
     ()=>{ S.sub.pi++; if(S.sub.pi<ph.length){ runPhase(); } else { intervalLog(s); } }, endKind);
 }
-function ivPause(){ if(Timer.paused){Timer.resume();}else{Timer.pause();} intervalShow(S.spec.steps[S.stepIdx]); }
+function ivPause(){ if(Timer.paused){Timer.resume();}else{Timer.pause();}
+  const s=S.spec.steps[S.stepIdx];
+  if(S.sub.inPrep) ivPrepShow(s,S.sub.phases[S.sub.pi],Math.max(0,Timer.remainAtPause||IV_PREP));
+  else intervalShow(s); }
 function ivSkip(){ Timer.stop(); S.sub.pi++; const s=S.spec.steps[S.stepIdx];
   if(S.sub.pi<S.sub.phases.length) runPhase(); else intervalLog(s); }
 function intervalLog(s){
@@ -1168,7 +1382,7 @@ function circuitShow(s){
     <div class="center" style="margin:6px 0"><span class="pill ${p.rest?'rest':'work'}">${esc(s.label||"Core")} · Runde ${p.round+1}/${s.rounds}</span></div>
     <h1 class="center" style="margin:8px 0 0;font-size:23px">${esc(p.name)}</h1>
     ${p.timed?`<div class="timer" id="ccWrap">${ring(1,p.rest?"pause":(p.hold?"halten":""),mmss(p.sec))}</div>`
-      :`<div class="center" style="padding:34px 0"><div class="big-num" style="font-size:64px;color:var(--accent)">${p.distanceM?(p.distanceM+" m"):esc(p.reps||"")}</div><div class="t-sub" style="color:var(--muted)">${p.distanceM?"Strecke":"Wiederholungen"}${p.load?(" · "+esc(p.load.text||p.load)):""}</div></div>`}
+      :`<div class="center" style="padding:34px 0"><div class="big-num" style="font-size:64px;color:var(--work)">${p.distanceM?(p.distanceM+" m"):esc(p.reps||"")}</div><div class="t-sub" style="color:var(--muted)">${p.distanceM?"Strecke":"Wiederholungen"}${p.load?(" · "+esc(p.load.text||p.load)):""}</div></div>`}
     ${!p.rest?cueBlock(p.cue,8):""}
   </div>`);
   if(p.timed){
@@ -1265,9 +1479,9 @@ function mobilityShow(s){
   const poseIdx=ph.slice(0,i+1).filter(x=>!x.rest).length;
   const next=ph[i+1];
   const nextLabel=next?(next.rest?"Pause":esc(next.name)+(next.side?(" · "+next.side):"")):"fertig";
-  setRun(`<div class="phase-rest">
+  setRun(`<div class="phase-mob">
     <div class="center" style="margin:6px 0">
-      <span class="pill rest">${esc(s.label||"Mobility")} · ${p.rest?"Pause":(poseIdx+" / "+totalPoses)}</span>
+      <span class="pill mob">${esc(s.label||"Mobility")} · ${p.rest?"Pause":(poseIdx+" / "+totalPoses)}</span>
     </div>
     <h1 class="center" style="margin:10px 0 0;font-size:23px">${esc(p.name)}${p.side?` <span class="muted" style="font-weight:600">· ${p.side}</span>`:""}</h1>
     <div class="timer" id="moWrap">${ring(1,p.rest?"pause":"halten",mmss(p.sec))}</div>
@@ -1295,9 +1509,9 @@ function moPrepShow(s,p,sec){
   const ph=S.sub.phases, i=S.sub.pi;
   const totalPoses=ph.filter(x=>!x.rest).length;
   const poseIdx=ph.slice(0,i+1).filter(x=>!x.rest).length;
-  setRun(`<div class="phase-rest">
+  setRun(`<div class="phase-mob">
     <div class="center" style="margin:6px 0">
-      <span class="pill rest">Einnehmen · ${poseIdx} / ${totalPoses}</span>
+      <span class="pill mob">Einnehmen · ${poseIdx} / ${totalPoses}</span>
     </div>
     <h1 class="center" style="margin:10px 0 0;font-size:23px">${esc(p.name)}${p.side?` <span class="muted" style="font-weight:600">· ${p.side}</span>`:""}</h1>
     <div class="timer" id="moWrap">${ring(1,"bereitmachen",mmss(sec))}</div>
@@ -1615,10 +1829,10 @@ function renderCarry(s){
     setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`); return; }
   const timed=!!s.durationSec;
   setRun(`<div class="eyebrow">Runde ${done+1}/${s.rounds}</div>
-    <h1 style="margin:4px 0 4px">${esc(s.name)}</h1>
+    <h2 class="run-title" style="margin:4px 0 4px">${esc(s.name)}</h2>
     <p class="muted" style="margin-bottom:14px">${s.load?esc(s.load.text||(s.load.kg+" kg")):""}${s.distanceM?(" · "+s.distanceM+" m"):""}${s.durationSec?(" · "+s.durationSec+" s"):""}</p>
-    ${cueBlock(s.cue)}
-    ${timed?`<div class="timer phase-work" id="carryWrap">${ring(1,"carry",mmss(s.durationSec))}</div>`:`<div class="note">Strecke gehen, dann „Runde fertig".</div>`}`);
+    ${timed?`<div class="timer phase-work" id="carryWrap">${ring(1,"carry",mmss(s.durationSec))}</div>`:`<div class="note">Strecke gehen, dann „Runde fertig".</div>`}
+    ${cueDisclosure(s.cue,s.cuePinned)}`);
   if(timed) setBar(`<button class="btn" onclick="carryGo(${s.durationSec})">Starten</button>`);
   else setBar(`<button class="btn" onclick="carryLog()">Runde fertig</button>`);
 }
