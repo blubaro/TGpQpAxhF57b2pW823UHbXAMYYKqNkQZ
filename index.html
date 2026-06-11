@@ -235,9 +235,16 @@ a{color:var(--accent-ink)}
    - v1-Specs werden automatisch beim Import auf v2 normalisiert
    Änderungen v2 → v3 (rein additiv, abwärtskompatibel):
    - optionales cuePinned:true je Übung → Hinweis startet aufgeklappt statt hinter (i)
+   Änderungen v3 → v4:
+   - perSide:true bei strength / superset.exercises[] → Wdh/RIR links & rechts getrennt
+     abfragen; Result-log-Zeilen tragen side:"L"|"R" (Pause erst nach rechts)
+   - Ruder-Meter-Tracking entfernt (rowingMetersBefore, summary.rowingMeters*, Meilenstein-UI)
+   - Last wird auch bei Timer-Stationen im Zirkel angezeigt
+   - erledigte Sätze (strength/plyo) antippbar → Korrektur
+   - Stepper-Wert antippbar → Direkteingabe
    ============================================================ */
 
-const SCHEMA = 3;
+const SCHEMA = 4;
 const SAVE_KEY = "coachRunner.session.v2";   // v1-Bucket bewusst gewechselt, damit alte localStorage-Sessions keine Crash-Recovery auslösen
 const WD = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
 
@@ -294,6 +301,10 @@ function cueBlock(cue,mb){
   return `<div class="note" style="${style}">💡 ${esc(cue)}</div>`;
 }
 function mmss(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60),s=sec%60; return m+":"+String(s).padStart(2,"0"); }
+/* Last (String ODER {text,kg}) als Anzeigetext. */
+function loadText(l){ if(l==null) return ""; if(typeof l==="string") return l; return l.text||(l.kg!=null?(l.kg+" kg"):""); }
+/* Seiten-Label für perSide-Log-Einträge. */
+function sideLabel(side){ return side==="L"?" · links":side==="R"?" · rechts":""; }
 /* Mehrere Cue-Quellen (String|Array|null) zu einer flachen Liste zusammenführen. */
 function mergeCues(...cs){
   const out=[];
@@ -785,9 +796,9 @@ function currentStepCue(){
   const s=S.spec.steps[S.stepIdx], rs=(S.result&&S.result.steps&&S.result.steps[S.stepIdx])||{};
   if(!s) return null;
   if(s.type==="superset"){
-    const exN=(s.exercises||[]).length||1, done=(rs.log?rs.log.length:0);
-    const ex=(s.exercises||[])[done%exN]||(s.exercises||[])[0];
-    return mergeCues(ex&&ex.cue, s.cue);
+    const slots=ssSlots(s), done=(rs.log?rs.log.length:0);
+    const slot=slots.length?slots[done%slots.length]:null;
+    return mergeCues(slot&&slot.ex.cue, s.cue);
   }
   if(s.type==="cardio"){
     const segs=s.segments||[], seg=segs[S.sub.segIdx||0];
@@ -985,22 +996,35 @@ function toggleChecklistTimer(total){
 }
 function toggleCheck(i){ S.sub.checked[i]=!S.sub.checked[i]; renderStep(); }
 
-/* ---- STRENGTH ---- */
+/* ---- STRENGTH ----
+   perSide:true (v4): jeder Satz wird links → rechts getrennt geloggt (2 Log-Zeilen/Satz,
+   side:"L"/"R"); Pause erst nach der rechten Seite. Korrektur-Modus: Tap auf eine erledigte
+   Zeile lädt sie in die Stepper (S.sub.editIdx), Speichern schreibt in-place zurück. */
+function doneSetRow(l,i,perN,withRir){
+  const n=Math.floor(i/perN)+1;
+  return `<div class="set-row" onclick="editSet(${i})" role="button" title="Antippen zum Korrigieren"><div class="n ok">${n}</div>
+     <span>${l.reps} Wdh${sideLabel(l.side)}${l.load?(" · "+l.load+" kg"):""}</span>${withRir&&l.rir!=null?`<b class="muted" style="margin-left:auto">RIR ${l.rir}</b>`:""}</div>`;
+}
 function renderStrength(s){
   const rs=S.result.steps[S.stepIdx];
   if(!rs.log) rs.log=[];
-  const setNo=rs.log.length; // sets already done
-  if(setNo>=s.sets){ return strengthDone(s,rs); }
+  const per=!!s.perSide, perN=per?2:1;
+  const editing=S.sub.editIdx!=null;
+  const setNo=Math.floor(rs.log.length/perN); // sets already done
+  const sideIdx=rs.log.length%perN;           // 0 = links, 1 = rechts (nur perSide)
+  if(setNo>=s.sets && !editing){ return strengthDone(s,rs); }
   const isBW = s.load && /bw|körper|body/i.test(s.load.text||"") && (s.load.kg==null);
-  const prev=rs.log[setNo-1];
+  const prev=rs.log[rs.log.length-perN];      // gleicher Slot (gleiche Seite) im Satz davor
   const defReps = prev?prev.reps : (Array.isArray(s.repTarget)?s.repTarget[1]:s.repTarget);
   const defLoad = prev?prev.load : (s.load&&s.load.kg!=null?s.load.kg:0);
   const defRir  = prev?prev.rir  : (s.rirTarget!=null?s.rirTarget:2);
   if(S.sub.reps==null){ S.sub.reps=defReps; S.sub.load=defLoad; S.sub.rir=defRir; }
-  const done=rs.log.map((l,i)=>`<div class="set-row"><div class="n ok">${i+1}</div>
-     <span>${l.reps} Wdh${l.load?(" · "+l.load+" kg"):""}</span><b class="muted" style="margin-left:auto">RIR ${l.rir}</b></div>`).join("");
+  const done=rs.log.map((l,i)=>doneSetRow(l,i,perN,true)).join("");
+  const eyebrow = editing
+    ? `Korrektur · Satz ${Math.floor(S.sub.editIdx/perN)+1}${sideLabel(rs.log[S.sub.editIdx].side)}`
+    : `Satz ${setNo+1} von ${s.sets}${per?sideLabel(sideIdx?"R":"L"):(s.load&&s.load.perHand?" · je Seite":"")}`;
   setRun(`
-    <div class="eyebrow">Satz ${setNo+1} von ${s.sets} ${s.load&&s.load.perHand?"· je Seite":""}</div>
+    <div class="eyebrow">${eyebrow}</div>
     <h2 class="run-title" style="margin:4px 0 4px">${esc(s.name)}</h2>
     <p class="muted" style="margin-bottom:12px">
       Ziel ${esc(repText(s.repTarget))} Wdh${s.load?(" · "+esc(s.load.text||(s.load.kg+" kg"))):""} · RIR ${esc(s.rirTarget)}</p>
@@ -1011,12 +1035,36 @@ function renderStrength(s){
     </div>
     ${cueDisclosure(s.cue,s.cuePinned)}
     ${s.lastTime?`<div class="note last-note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
-    ${done?`<div class="card"><div class="eyebrow" style="margin-bottom:4px">Erledigt</div>${done}</div>`:""}`);
-  setBar(`<div class="btn-row">
-      <button class="btn sec sm" style="flex:none;width:46%" onclick="skipExercise()">Übung überspringen</button>
-      <button class="btn" onclick="logSet()">${setNo+1<s.sets?"Satz fertig → Pause":"Satz fertig"}</button>
+    ${done?`<div class="card"><div class="eyebrow" style="margin-bottom:4px">Erledigt · antippen zum Korrigieren</div>${done}</div>`:""}`);
+  if(editing){
+    setBar(`<div class="btn-row">
+      <button class="btn sec" style="flex:none;width:40%" onclick="cancelEdit()">Abbrechen</button>
+      <button class="btn" onclick="logSet()">Korrektur speichern</button>
     </div>`);
+  } else {
+    const label = per&&sideIdx===0 ? "Links fertig → rechts"
+                : (setNo+1<s.sets?"Satz fertig → Pause":"Satz fertig");
+    setBar(`<div class="btn-row">
+      <button class="btn sec sm" style="flex:none;width:46%" onclick="skipExercise()">Übung überspringen</button>
+      <button class="btn" onclick="logSet()">${label}</button>
+    </div>`);
+  }
 }
+/* Erledigten Satz korrigieren (strength/plyo): Eintrag in die Stepper laden, in-place speichern.
+   In-place statt Splice, damit Reihenfolge/Seiten-Parität der Log-Zeilen erhalten bleibt. */
+function editSet(i){
+  const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
+  if(!rs||!rs.log||!rs.log[i]) return;
+  if(s.type!=="strength" && s.type!=="plyo") return;
+  preserveScreenState();
+  const e=rs.log[i];
+  S.sub.editIdx=i;
+  S.sub.reps=e.reps;
+  if(e.load!=null) S.sub.load=e.load;
+  if(e.rir!=null)  S.sub.rir=e.rir;
+  renderStep();
+}
+function cancelEdit(){ S.sub.editIdx=null; S.sub.reps=null; renderStep(); }
 function loadField(s){
   const bells=S.spec.availableBells;
   let chips="";
@@ -1026,7 +1074,7 @@ function loadField(s){
   return `<div class="field"><div class="lab">Last <span class="hint">kg ${s.load&&s.load.perHand?"je Hand":""}</span></div>
     <div class="stepper">
       <button onclick="bump('load',-2)">–</button>
-      <div class="val"><b class="tnum" id="v-load">${S.sub.load}</b><small>kg</small></div>
+      <div class="val" onclick="typeVal('load')" title="Antippen zum Eintippen"><b class="tnum" id="v-load">${S.sub.load}</b><small>kg</small></div>
       <button onclick="bump('load',2)">+</button>
     </div>${chips}</div>`;
 }
@@ -1035,9 +1083,31 @@ function stepperField(label,key,step,unit,min,max){
   return `<div class="field"><div class="lab">${label}</div>
     <div class="stepper">
       <button onclick="bump('${key}',${-step},${mn},${mx})">–</button>
-      <div class="val"><b class="tnum" id="v-${key}">${S.sub[key]}</b><small>${unit}</small></div>
+      <div class="val" onclick="typeVal('${key}')" title="Antippen zum Eintippen"><b class="tnum" id="v-${key}">${S.sub[key]}</b><small>${unit}</small></div>
       <button onclick="bump('${key}',${step},${mn},${mx})">+</button>
     </div></div>`;
+}
+/* Tap auf den Stepper-Wert → Direkteingabe (große Sprünge ohne ±-Getippe).
+   Ersetzt das <b> temporär durch ein Zahlenfeld; Enter/Blur übernimmt. */
+function typeVal(key){
+  const el=$("v-"+key); if(!el) return;
+  const cur=S.sub[key];
+  const inp=document.createElement("input");
+  inp.type="number"; inp.inputMode="decimal"; inp.value=cur;
+  inp.style.cssText="font-size:28px;font-weight:800;width:110px;text-align:center;border:none;background:transparent;color:var(--ink);font-family:inherit;font-variant-numeric:tabular-nums";
+  el.replaceWith(inp); inp.focus(); inp.select();
+  let done=false;
+  const commit=()=>{
+    if(done) return; done=true;
+    let v=parseFloat(inp.value);
+    if(!isFinite(v)||v<0) v=cur;
+    S.sub[key]=v;
+    const b=document.createElement("b"); b.className="tnum"; b.id="v-"+key; b.textContent=v;
+    inp.replaceWith(b);
+    if(key==="load"){ document.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",Number(c.textContent)===v)); }
+  };
+  inp.addEventListener("blur",commit);
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); inp.blur(); } });
 }
 function bump(key,delta,min,max){
   let v=(S.sub[key]||0)+delta;
@@ -1051,21 +1121,31 @@ function setVal(key,v){ S.sub[key]=v; const el=$("v-"+key); if(el)el.textContent
   document.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",Number(c.textContent)===v)); }
 function logSet(){
   const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
+  const per=!!s.perSide;
   const entry={reps:S.sub.reps,rir:S.sub.rir};
   if(S.sub.load) entry.load=S.sub.load;
+  // Korrektur-Modus: in-place zurückschreiben (side bleibt erhalten), kein neuer Eintrag
+  if(S.sub.editIdx!=null){
+    rs.log[S.sub.editIdx]=Object.assign({},rs.log[S.sub.editIdx],entry);
+    S.sub.editIdx=null; S.sub.reps=null;
+    toast("Satz korrigiert");
+    renderStep(); return;
+  }
+  if(per) entry.side=(rs.log.length%2===0)?"L":"R";
   rs.log.push(entry);
+  // perSide: nach links direkt rechts (Werte bleiben als Vorbelegung stehen), keine Pause
+  if(per && rs.log.length%2===1){ renderStep(); return; }
   S.sub.reps=null;
-  if(rs.log.length<s.sets){ startRest(s.restSec||75); }
+  if(rs.log.length<s.sets*(per?2:1)){ startRest(s.restSec||75); }
   else { rs.status="done"; cueDone(); renderStep(); }
 }
 function strengthDone(s,rs){
-  // shown only momentarily before nextStep auto? We render a confirm + auto-advance via Weiter
-  const avg=(arr,k)=>Math.round(arr.reduce((a,x)=>a+(x[k]||0),0)/arr.length);
+  const perN=s.perSide?2:1;
   setRun(`
     <div class="eyebrow">Übung erledigt</div>
     <h1 style="margin:4px 0 12px">${esc(s.name)} ✓</h1>
-    <div class="card">${rs.log.map((l,i)=>`<div class="set-row"><div class="n ok">${i+1}</div>
-        <span>${l.reps} Wdh${l.load?(" · "+l.load+" kg"):""}</span><b class="muted" style="margin-left:auto">RIR ${l.rir}</b></div>`).join("")}</div>
+    <div class="card"><div class="eyebrow" style="margin-bottom:4px">Antippen zum Korrigieren</div>
+      ${rs.log.map((l,i)=>doneSetRow(l,i,perN,true)).join("")}</div>
     <div class="field"><div class="lab">Notiz zur Übung (optional)</div>
       <textarea class="txt" id="exNote" placeholder="z.B. fühlte sich leicht an, nächstes Mal schwerer">${esc(rs.note||"")}</textarea></div>`);
   setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`);
@@ -1100,21 +1180,20 @@ function confirmSkip(){
 function renderPlyo(s){
   const rs=S.result.steps[S.stepIdx];
   if(!rs.log) rs.log=[];
+  const editing=S.sub.editIdx!=null;
   const setNo=rs.log.length;
-  if(setNo>=s.sets){ return plyoDone(s,rs); }
+  if(setNo>=s.sets && !editing){ return plyoDone(s,rs); }
   const hasLoad = s.load && s.load.kg!=null;
   const prev=rs.log[setNo-1];
   const defReps = prev?prev.reps:(Array.isArray(s.repTarget)?s.repTarget[0]:s.repTarget);
   const defLoad = prev?prev.load:(hasLoad?s.load.kg:0);
   if(S.sub.reps==null){ S.sub.reps=defReps; S.sub.load=defLoad; }
-  const done=rs.log.map((l,i)=>`<div class="set-row"><div class="n ok">${i+1}</div>
-     <span>${l.reps} Wdh${l.load?(" · "+l.load+" kg"):""}</span></div>`).join("");
-  const loadLabel = hasLoad ? (" · "+esc(s.load.text||(s.load.kg+" kg"))) : (s.load&&s.load.text?(" · "+esc(s.load.text)):"");
+  const done=rs.log.map((l,i)=>doneSetRow(l,i,1,false)).join("");
   setRun(`
-    <div class="eyebrow">Satz ${setNo+1} von ${s.sets} · Sprungkraft</div>
+    <div class="eyebrow">${editing?`Korrektur · Satz ${S.sub.editIdx+1}`:`Satz ${setNo+1} von ${s.sets} · Sprungkraft`}</div>
     <h2 class="run-title" style="margin:4px 0 4px">${esc(s.name)}</h2>
     <p class="muted" style="margin-bottom:12px">
-      Ziel ${esc(repText(s.repTarget))} Wdh${s.boxHeightCm?(" · Box "+s.boxHeightCm+" cm"):""}${loadLabel}</p>
+      Ziel ${esc(repText(s.repTarget))} Wdh${s.boxHeightCm?(" · Box "+s.boxHeightCm+" cm"):""}${hasLoad?(" · "+esc(s.load.text||(s.load.kg+" kg"))):(s.load&&s.load.text?(" · "+esc(s.load.text)):"")}</p>
     <div class="card">
       ${stepperField("Wiederholungen","reps",1,"Wdh")}
       ${hasLoad?plyoLoadField():""}
@@ -1122,17 +1201,24 @@ function renderPlyo(s){
     <div class="note" style="margin:12px 0">⚡ Explosiv, sauber landen — volle Erholung zwischen den Sätzen, <b>nicht</b> bis zur Erschöpfung.</div>
     ${cueDisclosure(mergeCues(s.cue,s.note),s.cuePinned)}
     ${s.lastTime?`<div class="note last-note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}
-    ${done?`<div class="card"><div class="eyebrow" style="margin-bottom:4px">Erledigt</div>${done}</div>`:""}`);
-  setBar(`<div class="btn-row">
+    ${done?`<div class="card"><div class="eyebrow" style="margin-bottom:4px">Erledigt · antippen zum Korrigieren</div>${done}</div>`:""}`);
+  if(editing){
+    setBar(`<div class="btn-row">
+      <button class="btn sec" style="flex:none;width:40%" onclick="cancelEdit()">Abbrechen</button>
+      <button class="btn" onclick="logPlyo()">Korrektur speichern</button>
+    </div>`);
+  } else {
+    setBar(`<div class="btn-row">
       <button class="btn sec sm" style="flex:none;width:46%" onclick="skipExercise()">Übung überspringen</button>
       <button class="btn" onclick="logPlyo()">${setNo+1<s.sets?"Satz fertig → Pause":"Satz fertig"}</button>
     </div>`);
+  }
 }
 function plyoLoadField(){
   return `<div class="field"><div class="lab">Last <span class="hint">kg</span></div>
     <div class="stepper">
       <button onclick="bump('load',-2)">–</button>
-      <div class="val"><b class="tnum" id="v-load">${S.sub.load}</b><small>kg</small></div>
+      <div class="val" onclick="typeVal('load')" title="Antippen zum Eintippen"><b class="tnum" id="v-load">${S.sub.load}</b><small>kg</small></div>
       <button onclick="bump('load',2)">+</button>
     </div></div>`;
 }
@@ -1140,6 +1226,12 @@ function logPlyo(){
   const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
   const entry={reps:S.sub.reps};
   if(S.sub.load) entry.load=S.sub.load;
+  if(S.sub.editIdx!=null){
+    rs.log[S.sub.editIdx]=Object.assign({},rs.log[S.sub.editIdx],entry);
+    S.sub.editIdx=null; S.sub.reps=null;
+    toast("Satz korrigiert");
+    renderStep(); return;
+  }
   rs.log.push(entry);
   S.sub.reps=null;
   if(rs.log.length<s.sets){ startRest(s.restSec||90); }
@@ -1149,19 +1241,39 @@ function plyoDone(s,rs){
   setRun(`
     <div class="eyebrow">Übung erledigt</div>
     <h1 style="margin:4px 0 12px">${esc(s.name)} ✓</h1>
-    <div class="card">${rs.log.map((l,i)=>`<div class="set-row"><div class="n ok">${i+1}</div>
-        <span>${l.reps} Wdh${l.load?(" · "+l.load+" kg"):""}</span></div>`).join("")}</div>
+    <div class="card"><div class="eyebrow" style="margin-bottom:4px">Antippen zum Korrigieren</div>
+      ${rs.log.map((l,i)=>doneSetRow(l,i,1,false)).join("")}</div>
     <div class="field"><div class="lab">Notiz zur Übung (optional)</div>
       <textarea class="txt" id="exNote" placeholder="z.B. Landung sauber, nächstes Mal Box +10 cm">${esc(rs.note||"")}</textarea></div>`);
   setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`);
 }
 
 /* ---- REST timer (between sets) ---- */
+// Was kommt nach der Pause? (Übung · Satz/Runde) — für die Pausen-Anzeige
+function nextUpLabel(){
+  const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
+  if(!s||!rs||!Array.isArray(rs.log)) return "";
+  if(s.type==="strength"||s.type==="plyo"){
+    const perN=(s.type==="strength"&&s.perSide)?2:1;
+    return `${esc(s.name)} · Satz ${Math.floor(rs.log.length/perN)+1} von ${s.sets}`;
+  }
+  if(s.type==="superset"){
+    const slots=ssSlots(s); if(!slots.length) return "";
+    const sl=slots[rs.log.length%slots.length];
+    return `${esc(sl.ex.name)}${sideLabel(sl.side)} · Runde ${Math.floor(rs.log.length/slots.length)+1} von ${s.rounds}`;
+  }
+  if(s.type==="carry") return `${esc(s.name)} · Runde ${rs.log.length+1} von ${s.rounds}`;
+  return "";
+}
 function startRest(sec){
+  const nxt=nextUpLabel();
   setRun(`<div class="phase-rest" style="margin-top:14px">
     <div class="eyebrow center" style="color:var(--rest)">Pause</div>
     <div class="timer" id="restWrap">${ring(1,"Pause",mmss(sec))}</div>
-    <div class="card center"><p class="muted" style="font-size:13.5px">Nächster Satz vorbereitet — Werte vom letzten Satz übernommen.</p></div>
+    <div class="card center">
+      ${nxt?`<div class="eyebrow" style="margin-bottom:4px">Gleich</div>
+      <div style="font-weight:750;margin-bottom:6px">${nxt}</div>`:""}
+      <p class="muted" style="font-size:13.5px">Werte vom letzten Satz übernommen.</p></div>
   </div>`);
   setBar(`<div class="btn-row">
     <button class="btn sec" style="flex:none;width:34%" onclick="Timer.add(30)">+30s</button>
@@ -1171,21 +1283,32 @@ function startRest(sec){
     ()=>{ renderStep(); }, "go");
 }
 
-/* ---- SUPERSET ---- */
+/* ---- SUPERSET ----
+   perSide:true je Übung (v4): die Übung belegt zwei aufeinanderfolgende Slots (links, rechts).
+   Slot-Liste wird aus exercises[] expandiert; Log-Index ↔ Slot-Mapping bleibt stabil. */
+function ssSlots(s){
+  const out=[];
+  (s.exercises||[]).forEach((ex,xi)=>{
+    if(ex.perSide){ out.push({ex,xi,side:"L"}); out.push({ex,xi,side:"R"}); }
+    else out.push({ex,xi});
+  });
+  return out;
+}
 function renderSuperset(s){
   const rs=S.result.steps[S.stepIdx]; if(!rs.log)rs.log=[];
-  const exN=s.exercises.length, total=s.rounds*exN, done=rs.log.length;
+  const slots=ssSlots(s), slotN=slots.length, exN=s.exercises.length;
+  const total=s.rounds*slotN, done=rs.log.length;
   if(done>=total){ rs.status="done"; return supersetDone(s,rs); }
-  const round=Math.floor(done/exN), exI=done%exN, ex=s.exercises[exI];
-  const prev=rs.log[done-exN]; // same exercise prev round
+  const round=Math.floor(done/slotN), sI=done%slotN, slot=slots[sI], ex=slot.ex;
+  const prev=rs.log[done-slotN]; // same slot (exercise + side) prev round
   const defReps=prev?prev.reps:(Array.isArray(ex.repTarget)?ex.repTarget[1]:ex.repTarget);
-  const defLoad=prev?prev.load:(ex.load&&ex.load.kg!=null?ex.load.kg:(ex.load&&/bw/i.test(ex.load.text||"")?0:0));
+  const defLoad=prev?prev.load:(ex.load&&ex.load.kg!=null?ex.load.kg:0);
   const defRir =prev?prev.rir :(ex.rirTarget!=null?ex.rirTarget:2);
   if(S.sub.reps==null){ S.sub.reps=defReps; S.sub.load=defLoad; S.sub.rir=defRir; }
   const bw = ex.load && /bw|körper|body/i.test(ex.load.text||"");
-  const firstSlot = round===0&&exI===0;
+  const firstSlot = round===0&&sI===0;
   setRun(`
-    <div class="eyebrow">Runde ${round+1}/${s.rounds} · Übung ${exI+1}/${exN}</div>
+    <div class="eyebrow">Runde ${round+1}/${s.rounds} · Übung ${slot.xi+1}/${exN}${sideLabel(slot.side)}</div>
     <h2 class="run-title" style="margin:4px 0 4px">${esc(ex.name)}</h2>
     <p class="muted" style="margin-bottom:12px">Ziel ${esc(repText(ex.repTarget))} Wdh${ex.load?(" · "+esc(ex.load.text||(ex.load.kg+" kg"))):""}${ex.rirTarget!=null?(" · RIR "+ex.rirTarget):""}</p>
     <div class="card">
@@ -1195,34 +1318,42 @@ function renderSuperset(s){
     </div>
     ${cueDisclosure(mergeCues(ex.cue, firstSlot?s.cue:null), ex.cuePinned||(firstSlot&&s.cuePinned))}
     ${s.lastTime&&firstSlot?`<div class="note last-note" style="margin-bottom:14px">↩ Letztes Mal: ${esc(s.lastTime)}</div>`:""}`);
-  const isLastInRound = exI===exN-1;
-  setBar(`<button class="btn" onclick="logSuperset(${isLastInRound})">${isLastInRound&&round+1<s.rounds?"Runde fertig → Pause":"Erledigt"}</button>`);
+  const isLastInRound = sI===slotN-1;
+  const label = slot.side==="L" ? "Links fertig → rechts"
+              : (isLastInRound&&round+1<s.rounds?"Runde fertig → Pause":"Erledigt");
+  setBar(`<button class="btn" onclick="logSuperset(${isLastInRound})">${label}</button>`);
 }
 function loadField2(ex){
   const bells=S.spec.availableBells; let chips="";
   if(Array.isArray(bells)&&bells.length) chips=`<div class="chips" style="margin-top:8px">${bells.map(b=>`<span class="chip ${S.sub.load==b?'on':''}" onclick="setVal('load',${b})">${b}</span>`).join("")}</div>`;
   return `<div class="field"><div class="lab">Last <span class="hint">kg ${ex.load&&ex.load.perHand?"je Hand":""}</span></div>
     <div class="stepper"><button onclick="bump('load',-2)">–</button>
-      <div class="val"><b class="tnum" id="v-load">${S.sub.load}</b><small>kg</small></div>
+      <div class="val" onclick="typeVal('load')" title="Antippen zum Eintippen"><b class="tnum" id="v-load">${S.sub.load}</b><small>kg</small></div>
       <button onclick="bump('load',2)">+</button></div>${chips}</div>`;
 }
 function logSuperset(restAfter){
   const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
+  const slots=ssSlots(s);
+  const slot=slots[rs.log.length%slots.length];
   const entry={reps:S.sub.reps,rir:S.sub.rir};
   if(S.sub.load) entry.load=S.sub.load;
+  if(slot&&slot.side) entry.side=slot.side;
   rs.log.push(entry);
-  S.sub.reps=null;
-  const total=s.rounds*s.exercises.length;
+  const total=s.rounds*slots.length;
   if(rs.log.length>=total){ rs.status="done"; cueDone(); renderStep(); return; }
+  // nach links direkt rechts (Werte bleiben als Vorbelegung), keine Pause dazwischen
+  if(slot&&slot.side==="L"){ renderStep(); return; }
+  S.sub.reps=null;
   if(restAfter){ startRest(s.restSec||90); }
   else { renderStep(); }
 }
 function supersetDone(s,rs){
+  const slots=ssSlots(s);
   setRun(`<div class="eyebrow">Superset erledigt</div>
     <h1 style="margin:4px 0 12px">${esc(s.label||"Superset")} ✓</h1>
-    <div class="card">${rs.log.map((l,i)=>{const ex=s.exercises[i%s.exercises.length];
-      return `<div class="set-row"><div class="n ok">${Math.floor(i/s.exercises.length)+1}</div>
-      <span>${esc(ex.name)} · ${l.reps} Wdh${l.load?(" · "+l.load+" kg"):""}</span></div>`;}).join("")}</div>
+    <div class="card">${rs.log.map((l,i)=>{const sl=slots[i%slots.length];
+      return `<div class="set-row"><div class="n ok">${Math.floor(i/slots.length)+1}</div>
+      <span>${esc(sl.ex.name)}${sideLabel(l.side)} · ${l.reps} Wdh${l.load?(" · "+l.load+" kg"):""}</span></div>`;}).join("")}</div>
     <div class="field"><div class="lab">Notiz (optional)</div><textarea class="txt" id="exNote">${esc(rs.note||"")}</textarea></div>`);
   setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`);
 }
@@ -1381,8 +1512,9 @@ function circuitShow(s){
   setRun(`<div class="${cls}">
     <div class="center" style="margin:6px 0"><span class="pill ${p.rest?'rest':'work'}">${esc(s.label||"Core")} · Runde ${p.round+1}/${s.rounds}</span></div>
     <h1 class="center" style="margin:8px 0 0;font-size:23px">${esc(p.name)}</h1>
+    ${p.timed&&!p.rest&&p.load?`<p class="center" style="margin:6px 0 0;font-weight:750">${esc(loadText(p.load))}</p>`:""}
     ${p.timed?`<div class="timer" id="ccWrap">${ring(1,p.rest?"pause":(p.hold?"halten":""),mmss(p.sec))}</div>`
-      :`<div class="center" style="padding:34px 0"><div class="big-num" style="font-size:64px;color:var(--work)">${p.distanceM?(p.distanceM+" m"):esc(p.reps||"")}</div><div class="t-sub" style="color:var(--muted)">${p.distanceM?"Strecke":"Wiederholungen"}${p.load?(" · "+esc(p.load.text||p.load)):""}</div></div>`}
+      :`<div class="center" style="padding:34px 0"><div class="big-num" style="font-size:64px;color:var(--work)">${p.distanceM?(p.distanceM+" m"):esc(p.reps||"")}</div><div class="t-sub" style="color:var(--muted)">${p.distanceM?"Strecke":"Wiederholungen"}${p.load?(" · "+esc(loadText(p.load))):""}</div></div>`}
     ${!p.rest?cueBlock(p.cue,8):""}
   </div>`);
   if(p.timed){
@@ -1412,6 +1544,7 @@ function ccPrepShow(s,p,sec){
   setRun(`<div class="phase-rest">
     <div class="center" style="margin:6px 0"><span class="pill rest">${esc(s.label||"Core")} · Nächste Übung</span></div>
     <h1 class="center" style="margin:10px 0 0;font-size:23px">${esc(p.name)}</h1>
+    ${p.load?`<p class="center" style="margin:6px 0 0;font-weight:750">${esc(loadText(p.load))}</p>`:""}
     <div class="timer" id="ccWrap">${ring(1,"bereitmachen",mmss(sec))}</div>
     ${cueBlock(p.cue,8)}
   </div>`);
@@ -1815,7 +1948,6 @@ function saveCardio(){
     if(any) rs.segmentResults=segRes;
   }
   rs.status="done";
-  if(s.modality==="row" && distM){ S.sub.rowMeters=distM; }
   nextStep();
 }
 
@@ -1849,27 +1981,27 @@ function buildSummary(status){
   const now=new Date();
   m.date=now.toISOString().slice(0,10); m.weekday=WD[now.getDay()];
   const actualMin=S.startedAt?Math.round((Date.now()-S.startedAt)/60000):null;
-  // tallies
-  let hardSets=0, rowMeters=0;
+  // tallies — perSide-Logs zählen L+R zusammen als EINEN harten Satz
+  let hardSets=0;
+  const doneSteps=r.steps.filter(s=>s.status!=="skipped").length;
   r.steps.forEach(s=>{
-    if((s.type==="strength"||s.type==="superset") && Array.isArray(s.log) && s.status!=="skipped") hardSets+=s.log.length;
-    if(s.type==="cardio" && s.modality==="row" && s.result && s.result.distanceM) rowMeters+=s.result.distanceM;
+    if(s.status==="skipped" || !Array.isArray(s.log)) return;
+    if(s.type==="strength") hardSets += s.perSide ? Math.ceil(s.log.length/2) : s.log.length;
+    if(s.type==="superset"){
+      const slots=ssSlots(s);
+      s.log.forEach((l,i)=>{ const sl=slots.length?slots[i%slots.length]:null; if(!(sl&&sl.side==="R")) hardSets++; });
+    }
   });
-  const before=Number(r.rowingMetersBefore)||0;
   r.summary={
     status:status,
     actualDurationMin:actualMin,
     totalHardSets:hardSets,
-    rowingMetersThisSession:rowMeters,
-    rowingMetersAfter: before+rowMeters,
     overallNotes:""
   };
-  renderSummary(rowMeters,before);
+  renderSummary(doneSteps);
 }
-function renderSummary(rowMeters,before){
+function renderSummary(doneSteps){
   const r=S.result, su=r.summary;
-  const after=su.rowingMetersAfter;
-  const milestone = before>0 && rowMeters>0 ? milestoneMsg(before,after) : null;
   const skipped=r.steps.filter(s=>s.status==="skipped").length;
   setScreen(`
     <div class="eyebrow">${su.status==="completed"?"Geschafft":su.status==="shortened"?"Verkürzt — zählt trotzdem":"Abgebrochen"}</div>
@@ -1877,11 +2009,8 @@ function renderSummary(rowMeters,before){
     <div class="card flush" style="display:flex;text-align:center">
       <div style="flex:1;padding:18px 6px"><div class="big-num" style="font-size:34px">${su.actualDurationMin??"–"}</div><div class="t-sub" style="color:var(--muted)">Minuten</div></div>
       <div style="flex:1;padding:18px 6px;border-left:1px solid var(--line);border-right:1px solid var(--line)"><div class="big-num" style="font-size:34px">${su.totalHardSets}</div><div class="t-sub" style="color:var(--muted)">harte Sätze</div></div>
-      <div style="flex:1;padding:18px 6px"><div class="big-num" style="font-size:34px">${rowMeters?(rowMeters>=1000?(rowMeters/1000).toFixed(1)+"k":rowMeters):"–"}</div><div class="t-sub" style="color:var(--muted)">Ruder-m</div></div>
+      <div style="flex:1;padding:18px 6px"><div class="big-num" style="font-size:34px">${doneSteps}/${r.steps.length}</div><div class="t-sub" style="color:var(--muted)">Schritte ✓</div></div>
     </div>
-    ${milestone?`<div class="card celebrate"><div class="eyebrow">Ruder-Meter</div>
-      <div style="font-weight:750;margin-top:4px">${esc(milestone)}</div>
-      <div class="muted" style="margin-top:4px;font-size:13px">Gesamt: ${after.toLocaleString("de-DE")} m</div></div>`:""}
     ${skipped?`<div class="note" style="margin-bottom:14px">${skipped} Schritt(e) übersprungen — steht im Result für den Coach.</div>`:""}
     <div class="field"><div class="lab">Gesamt-Notiz für den Coach</div>
       <textarea class="txt" id="sumNote" rows="3" placeholder="Wie war's? Was war zu leicht/schwer?" oninput="refreshResultPreview()"></textarea></div>
@@ -1900,14 +2029,6 @@ function renderSummary(rowMeters,before){
     <button class="btn ghost" onclick="restartAll()">Neues Workout laden</button>`);
   setBar(``);
   refreshResultPreview();
-}
-function milestoneMsg(before,after){
-  const marks=[10000,25000,50000,100000,250000,500000,1000000,2000000,5000000];
-  for(const mk of marks){ if(before<mk && after>=mk){
-    return mk>=1000000?`🏅 ${(mk/1000000)}-Millionen-Meter-Marke geknackt!`:`🎯 ${mk.toLocaleString("de-DE")} m-Marke erreicht!`; } }
-  const k=Math.floor(after/100000), kb=Math.floor(before/100000);
-  if(k>kb) return `📈 ${(k*100000).toLocaleString("de-DE")} m überschritten — weiter Richtung Million!`;
-  return null;
 }
 function resultJSON(){
   const n=$("sumNote"); if(n) S.result.summary.overallNotes=n.value.trim();
