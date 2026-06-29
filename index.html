@@ -242,9 +242,14 @@ a{color:var(--accent-ink)}
    - Last wird auch bei Timer-Stationen im Zirkel angezeigt
    - erledigte Sätze (strength/plyo) antippbar → Korrektur
    - Stepper-Wert antippbar → Direkteingabe
+   Änderungen v4 → v5 (rein additiv, abwärtskompatibel):
+   - optionales alternating:true bei strength / superset.exercises[] → Übung wird Arm-um-Arm
+     IM WECHSEL ausgeführt: EIN Satz (kein L/R-Split), Reps gelten je Seite, Label "/Seite (im
+     Wechsel)". Schließt perSide aus (alternating gewinnt). Result-log: eine Zeile/Satz, kein side.
+   - Circuit: 5s-Countdown jetzt auch vor der ersten Station (vorher nur zwischen Stationen)
    ============================================================ */
 
-const SCHEMA = 4;
+const SCHEMA = 5;
 const SAVE_KEY = "coachRunner.session.v2";   // v1-Bucket bewusst gewechselt, damit alte localStorage-Sessions keine Crash-Recovery auslösen
 const WD = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
 
@@ -1000,15 +1005,16 @@ function toggleCheck(i){ S.sub.checked[i]=!S.sub.checked[i]; renderStep(); }
    perSide:true (v4): jeder Satz wird links → rechts getrennt geloggt (2 Log-Zeilen/Satz,
    side:"L"/"R"); Pause erst nach der rechten Seite. Korrektur-Modus: Tap auf eine erledigte
    Zeile lädt sie in die Stepper (S.sub.editIdx), Speichern schreibt in-place zurück. */
-function doneSetRow(l,i,perN,withRir){
+function doneSetRow(l,i,perN,withRir,alt){
   const n=Math.floor(i/perN)+1;
   return `<div class="set-row" onclick="editSet(${i})" role="button" title="Antippen zum Korrigieren"><div class="n ok">${n}</div>
-     <span>${l.reps} Wdh${sideLabel(l.side)}${l.load?(" · "+l.load+" kg"):""}</span>${withRir&&l.rir!=null?`<b class="muted" style="margin-left:auto">RIR ${l.rir}</b>`:""}</div>`;
+     <span>${l.reps} Wdh${alt?"/Seite":""}${sideLabel(l.side)}${l.load?(" · "+l.load+" kg"):""}</span>${withRir&&l.rir!=null?`<b class="muted" style="margin-left:auto">RIR ${l.rir}</b>`:""}</div>`;
 }
 function renderStrength(s){
   const rs=S.result.steps[S.stepIdx];
   if(!rs.log) rs.log=[];
-  const per=!!s.perSide, perN=per?2:1;
+  const alt=!!s.alternating;                 // im Wechsel (Arm um Arm) → EIN Satz, kein L/R-Split
+  const per=!alt && !!s.perSide, perN=per?2:1;
   const editing=S.sub.editIdx!=null;
   const setNo=Math.floor(rs.log.length/perN); // sets already done
   const sideIdx=rs.log.length%perN;           // 0 = links, 1 = rechts (nur perSide)
@@ -1019,15 +1025,15 @@ function renderStrength(s){
   const defLoad = prev?prev.load : (s.load&&s.load.kg!=null?s.load.kg:0);
   const defRir  = prev?prev.rir  : (s.rirTarget!=null?s.rirTarget:2);
   if(S.sub.reps==null){ S.sub.reps=defReps; S.sub.load=defLoad; S.sub.rir=defRir; }
-  const done=rs.log.map((l,i)=>doneSetRow(l,i,perN,true)).join("");
+  const done=rs.log.map((l,i)=>doneSetRow(l,i,perN,true,alt)).join("");
   const eyebrow = editing
     ? `Korrektur · Satz ${Math.floor(S.sub.editIdx/perN)+1}${sideLabel(rs.log[S.sub.editIdx].side)}`
-    : `Satz ${setNo+1} von ${s.sets}${per?sideLabel(sideIdx?"R":"L"):(s.load&&s.load.perHand?" · je Seite":"")}`;
+    : `Satz ${setNo+1} von ${s.sets}${per?sideLabel(sideIdx?"R":"L"):(alt?" · im Wechsel":(s.load&&s.load.perHand?" · je Seite":""))}`;
   setRun(`
     <div class="eyebrow">${eyebrow}</div>
     <h2 class="run-title" style="margin:4px 0 4px">${esc(s.name)}</h2>
     <p class="muted" style="margin-bottom:12px">
-      Ziel ${esc(repText(s.repTarget))} Wdh${s.load?(" · "+esc(s.load.text||(s.load.kg+" kg"))):""} · RIR ${esc(s.rirTarget)}</p>
+      Ziel ${esc(repText(s.repTarget))} Wdh${alt?" / Seite (im Wechsel)":""}${s.load?(" · "+esc(s.load.text||(s.load.kg+" kg"))):""} · RIR ${esc(s.rirTarget)}</p>
     <div class="card">
       ${stepperField("Wiederholungen","reps",1,"Wdh")}
       ${isBW?"":loadField(s)}
@@ -1121,7 +1127,7 @@ function setVal(key,v){ S.sub[key]=v; const el=$("v-"+key); if(el)el.textContent
   document.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",Number(c.textContent)===v)); }
 function logSet(){
   const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
-  const per=!!s.perSide;
+  const per=!s.alternating && !!s.perSide;
   const entry={reps:S.sub.reps,rir:S.sub.rir};
   if(S.sub.load) entry.load=S.sub.load;
   // Korrektur-Modus: in-place zurückschreiben (side bleibt erhalten), kein neuer Eintrag
@@ -1140,12 +1146,12 @@ function logSet(){
   else { rs.status="done"; cueDone(); renderStep(); }
 }
 function strengthDone(s,rs){
-  const perN=s.perSide?2:1;
+  const alt=!!s.alternating, perN=(!alt&&s.perSide)?2:1;
   setRun(`
     <div class="eyebrow">Übung erledigt</div>
     <h1 style="margin:4px 0 12px">${esc(s.name)} ✓</h1>
     <div class="card"><div class="eyebrow" style="margin-bottom:4px">Antippen zum Korrigieren</div>
-      ${rs.log.map((l,i)=>doneSetRow(l,i,perN,true)).join("")}</div>
+      ${rs.log.map((l,i)=>doneSetRow(l,i,perN,true,alt)).join("")}</div>
     <div class="field"><div class="lab">Notiz zur Übung (optional)</div>
       <textarea class="txt" id="exNote" placeholder="z.B. fühlte sich leicht an, nächstes Mal schwerer">${esc(rs.note||"")}</textarea></div>`);
   setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`);
@@ -1254,7 +1260,7 @@ function nextUpLabel(){
   const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
   if(!s||!rs||!Array.isArray(rs.log)) return "";
   if(s.type==="strength"||s.type==="plyo"){
-    const perN=(s.type==="strength"&&s.perSide)?2:1;
+    const perN=(s.type==="strength"&&!s.alternating&&s.perSide)?2:1;
     return `${esc(s.name)} · Satz ${Math.floor(rs.log.length/perN)+1} von ${s.sets}`;
   }
   if(s.type==="superset"){
@@ -1289,8 +1295,8 @@ function startRest(sec){
 function ssSlots(s){
   const out=[];
   (s.exercises||[]).forEach((ex,xi)=>{
-    if(ex.perSide){ out.push({ex,xi,side:"L"}); out.push({ex,xi,side:"R"}); }
-    else out.push({ex,xi});
+    if(ex.perSide && !ex.alternating){ out.push({ex,xi,side:"L"}); out.push({ex,xi,side:"R"}); }
+    else out.push({ex,xi});   // alternating (im Wechsel) belegt EINEN Slot, kein L/R-Split
   });
   return out;
 }
@@ -1308,9 +1314,9 @@ function renderSuperset(s){
   const bw = ex.load && /bw|körper|body/i.test(ex.load.text||"");
   const firstSlot = round===0&&sI===0;
   setRun(`
-    <div class="eyebrow">Runde ${round+1}/${s.rounds} · Übung ${slot.xi+1}/${exN}${sideLabel(slot.side)}</div>
+    <div class="eyebrow">Runde ${round+1}/${s.rounds} · Übung ${slot.xi+1}/${exN}${slot.side?sideLabel(slot.side):(ex.alternating?" · im Wechsel":"")}</div>
     <h2 class="run-title" style="margin:4px 0 4px">${esc(ex.name)}</h2>
-    <p class="muted" style="margin-bottom:12px">Ziel ${esc(repText(ex.repTarget))} Wdh${ex.load?(" · "+esc(ex.load.text||(ex.load.kg+" kg"))):""}${ex.rirTarget!=null?(" · RIR "+ex.rirTarget):""}</p>
+    <p class="muted" style="margin-bottom:12px">Ziel ${esc(repText(ex.repTarget))} Wdh${ex.alternating?" / Seite (im Wechsel)":""}${ex.load?(" · "+esc(ex.load.text||(ex.load.kg+" kg"))):""}${ex.rirTarget!=null?(" · RIR "+ex.rirTarget):""}</p>
     <div class="card">
       ${stepperField("Wiederholungen","reps",1,"Wdh")}
       ${bw?"":loadField2(ex)}
@@ -1353,7 +1359,7 @@ function supersetDone(s,rs){
     <h1 style="margin:4px 0 12px">${esc(s.label||"Superset")} ✓</h1>
     <div class="card">${rs.log.map((l,i)=>{const sl=slots[i%slots.length];
       return `<div class="set-row"><div class="n ok">${Math.floor(i/slots.length)+1}</div>
-      <span>${esc(sl.ex.name)}${sideLabel(l.side)} · ${l.reps} Wdh${l.load?(" · "+l.load+" kg"):""}</span></div>`;}).join("")}</div>
+      <span>${esc(sl.ex.name)}${sideLabel(l.side)} · ${l.reps} Wdh${sl.ex.alternating?"/Seite":""}${l.load?(" · "+l.load+" kg"):""}</span></div>`;}).join("")}</div>
     <div class="field"><div class="lab">Notiz (optional)</div><textarea class="txt" id="exNote">${esc(rs.note||"")}</textarea></div>`);
   setBar(`<button class="btn good" onclick="saveExNote();nextStep()">Weiter</button>`);
 }
@@ -1525,7 +1531,15 @@ function circuitShow(s){
     setBar(`<button class="btn" onclick="ccNextManual()">Station fertig</button>`);
   }
 }
-function ccStart(){ S.sub.running=true; const p=S.sub.phases[S.sub.pi]; if(p&&p.timed)(p.rest?cueRest():cueWork()); ccRun(); }
+function ccStart(){
+  const s=S.spec.steps[S.stepIdx], p=S.sub.phases[S.sub.pi];
+  S.sub.running=true;
+  // Vor der allerersten Station denselben 5s-Vorlauf wie zwischen den Stationen geben
+  // (Chris-Wunsch: Countdown vor Circuit/Greasing-Runde 1). Anläuten + 3-2-1-0 liegen in ccPrep.
+  // Reps-Stationen haben keinen Timer → direkt starten (manueller "Station fertig"-Button).
+  if(p && p.timed && !p.rest){ ccPrep(s,p); return; }
+  ccRun();
+}
 function ccRun(){
   const s=S.spec.steps[S.stepIdx], ph=S.sub.phases, p=ph[S.sub.pi];
   if(!p) return circuitDone(s);
@@ -1986,7 +2000,7 @@ function buildSummary(status){
   const doneSteps=r.steps.filter(s=>s.status!=="skipped").length;
   r.steps.forEach(s=>{
     if(s.status==="skipped" || !Array.isArray(s.log)) return;
-    if(s.type==="strength") hardSets += s.perSide ? Math.ceil(s.log.length/2) : s.log.length;
+    if(s.type==="strength") hardSets += (s.perSide && !s.alternating) ? Math.ceil(s.log.length/2) : s.log.length;
     if(s.type==="superset"){
       const slots=ssSlots(s);
       s.log.forEach((l,i)=>{ const sl=slots.length?slots[i%slots.length]:null; if(!(sl&&sl.side==="R")) hardSets++; });
