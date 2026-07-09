@@ -6,8 +6,8 @@
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Coach Runner</title>
-<link rel="manifest" href='data:application/json,{"name":"Coach Runner","short_name":"Runner","start_url":"./","display":"standalone","background_color":"%23FFFFFF","theme_color":"%23F4F6F8","icons":[{"src":"data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 rx=%2742%27 fill=%27%232D7DC4%27/%3E%3Crect x=%2780%27 y=%2722%27 width=%2732%27 height=%2715%27 rx=%276%27 fill=%27%23FFFFFF%27/%3E%3Ccircle cx=%2796%27 cy=%27104%27 r=%2752%27 fill=%27none%27 stroke=%27%23FFFFFF%27 stroke-width=%2713%27/%3E%3Cpath d=%27M74 104 l14 16 l28 -34%27 fill=%27none%27 stroke=%27%23FFFFFF%27 stroke-width=%2713%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml","purpose":"any maskable"}]}'>
+<title>the.coach</title>
+<link rel="manifest" href='data:application/json,{"name":"the.coach","short_name":"the.coach","start_url":"./","display":"standalone","background_color":"%23FFFFFF","theme_color":"%23F4F6F8","icons":[{"src":"data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 rx=%2742%27 fill=%27%232D7DC4%27/%3E%3Crect x=%2780%27 y=%2722%27 width=%2732%27 height=%2715%27 rx=%276%27 fill=%27%23FFFFFF%27/%3E%3Ccircle cx=%2796%27 cy=%27104%27 r=%2752%27 fill=%27none%27 stroke=%27%23FFFFFF%27 stroke-width=%2713%27/%3E%3Cpath d=%27M74 104 l14 16 l28 -34%27 fill=%27none%27 stroke=%27%23FFFFFF%27 stroke-width=%2713%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml","purpose":"any maskable"}]}'>
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%232D7DC4'/%3E%3Crect x='80' y='22' width='32' height='15' rx='6' fill='%23FFFFFF'/%3E%3Ccircle cx='96' cy='104' r='52' fill='none' stroke='%23FFFFFF' stroke-width='13'/%3E%3Cpath d='M74 104 l14 16 l28 -34' fill='none' stroke='%23FFFFFF' stroke-width='13' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
 :root{
@@ -127,6 +127,12 @@ body{
 
 /* ---- typography ---- */
 .eyebrow{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+/* Wortmarke "the.coach" — Farbverlauf Accent→Grün; -ink-Töne sind je Theme auf
+   Lesbarkeit kalibriert (dunkle Themes: hell, helle Themes: satt) */
+.brand{display:inline-block;font-size:22px;font-weight:800;letter-spacing:-.02em;
+  background:linear-gradient(92deg,var(--accent-ink) 0%,var(--mob-ink) 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  -webkit-text-fill-color:transparent}
 h1{font-size:clamp(23px,6.5vw,26px);font-weight:800;letter-spacing:-.02em;line-height:1.15}
 h2{font-size:19px;font-weight:750;letter-spacing:-.01em}
 .big-num{font-weight:800;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
@@ -304,7 +310,7 @@ a{color:var(--accent-ink)}
 <script>
 "use strict";
 /* ============================================================
-   Coach Runner  —  rendert workout-spec, gibt workout-result
+   the.coach (ehem. Coach Runner)  —  rendert workout-spec, gibt workout-result
    Single file, vanilla JS, offline-tauglich. schemaVersion 6.
 
    Änderungen v1 → v2:
@@ -352,7 +358,7 @@ const SAVE_KEY = "coachRunner.session.v2";   // v1-Bucket bewusst gewechselt, da
 const WD = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
 
 // HF-Zonen kommen ausschließlich aus der Spec (optionales Feld spec.hrZones).
-// Format je Eintrag: { z:"Z2", lo:134, hi:148, name:"Grundlage / UT2" }
+// Format je Eintrag (fiktives Beispiel): { z:"Z2", lo:120, hi:140, name:"Grundlage / UT2" }
 // Fehlt das Feld, kennt die App keine Zonen — es bleiben nur die Ziel-Werte
 // des jeweiligen Cardio-Schritts (s.targetHr). Keine festen Werte in der App.
 function hrZones(){ return (S.spec && Array.isArray(S.spec.hrZones)) ? S.spec.hrZones : null; }
@@ -757,7 +763,7 @@ function renderImport(){
   const saved=loadSaved();
   setScreen(`
     <div style="padding-top:8px">
-      <div class="eyebrow">Coach Runner</div>
+      <div class="brand">the.coach</div>
       <h1 style="margin:6px 0 4px">Workout laden</h1>
       <p class="muted" style="margin-bottom:18px">Den <b>workout-spec</b> JSON-Block aus dem Coach-Chat hier einfügen.</p>
       ${saved?`<div class="card celebrate" style="margin-bottom:14px">
@@ -1675,7 +1681,7 @@ function ccStart(){
   const s=S.spec.steps[S.stepIdx], p=S.sub.phases[S.sub.pi];
   S.sub.running=true;
   // Vor der allerersten Station denselben 5s-Vorlauf wie zwischen den Stationen geben
-  // (Chris-Wunsch: Countdown vor Circuit/Greasing-Runde 1). Anläuten + 3-2-1-0 liegen in ccPrep.
+  // (Countdown auch vor Runde 1 des Circuits gewünscht). Anläuten + 3-2-1-0 liegen in ccPrep.
   // Reps-Stationen haben keinen Timer → direkt starten (manueller "Station fertig"-Button).
   if(p && p.timed && !p.rest){ ccPrep(s,p); return; }
   ccRun();
