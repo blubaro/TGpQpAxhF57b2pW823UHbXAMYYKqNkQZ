@@ -24,6 +24,49 @@
   --r:18px; --r-sm:12px;
   --safe-b:env(safe-area-inset-bottom,0px);
 }
+/* ---- Themes (umschaltbar via [data-theme] an <html>; Default = amoled, s. JS) ----
+   Regel: -ink = gut lesbare Textfarbe auf -soft-Fläche DIESES Themes,
+   -soft = flächige Tönung. In dunklen Themes sind -ink hell, -soft dunkel. */
+:root[data-theme="amoled"]{
+  --paper:#000000; --card:#0C0E10; --ink:#F2F4F6; --muted:#9AA2A8;
+  --line:#20242A; --line-strong:#2E343B;
+  --accent:#3E9BE8; --accent-ink:#8CC7F2; --accent-soft:#0E2233;
+  --work:#FF6A3D; --work-ink:#FFB39A; --work-soft:#2A130B;
+  --rest:#3E9BE8; --rest-ink:#8CC7F2; --rest-soft:#0E2233;
+  --mob:#34C08A; --mob-ink:#8FE3C4; --mob-soft:#08221A;
+  --good:#34C08A; --good-soft:#08221A;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 4px 16px rgba(0,0,0,.6);
+}
+:root[data-theme="sepia"]{
+  --paper:#F3EBDD; --card:#FBF6EC; --ink:#4A3F33; --muted:#8C7E6B;
+  --line:#E3D8C6; --line-strong:#D2C4AD;
+  --accent:#B5722E; --accent-ink:#8A551D; --accent-soft:#EFE0CB;
+  --work:#C6551F; --work-ink:#9A3D12; --work-soft:#F0DDCB;
+  --rest:#5E86A8; --rest-ink:#3E5F7D; --rest-soft:#DDE6ED;
+  --mob:#6E8B4E; --mob-ink:#51683A; --mob-soft:#E2E7D2;
+  --good:#6E8B4E; --good-soft:#E2E7D2;
+  --shadow:0 1px 2px rgba(74,63,51,.05),0 4px 16px rgba(74,63,51,.08);
+}
+:root[data-theme="contrast"]{
+  --paper:#FFFFFF; --card:#FFFFFF; --ink:#0A0C0E; --muted:#3A4046;
+  --line:#8B9298; --line-strong:#3A4046;
+  --accent:#0A5FB4; --accent-ink:#08477F; --accent-soft:#D6E6F5;
+  --work:#C62F00; --work-ink:#8E2200; --work-soft:#FBDDD2;
+  --rest:#0A5FB4; --rest-ink:#08477F; --rest-soft:#D6E6F5;
+  --mob:#0B7A4B; --mob-ink:#075733; --mob-soft:#CFEAD9;
+  --good:#0B7A4B; --good-soft:#CFEAD9;
+  --shadow:none;
+}
+:root[data-theme="coral"]{
+  --paper:#FBF6F4; --card:#FFFFFF; --ink:#33292A; --muted:#8A7A7B;
+  --line:#F0E4E0; --line-strong:#E3D0CB;
+  --accent:#EC5F52; --accent-ink:#C23B2E; --accent-soft:#FCE4E0;
+  --work:#E5562C; --work-ink:#B53C18; --work-soft:#FBE7DE;
+  --rest:#2AA9A0; --rest-ink:#1B7B74; --rest-soft:#D6EFEC;
+  --mob:#2E9E7B; --mob-ink:#1F7A5E; --mob-soft:#DCF1EA;
+  --good:#2E9E7B; --good-soft:#DCF1EA;
+  --shadow:0 1px 2px rgba(51,41,42,.05),0 4px 16px rgba(51,41,42,.07);
+}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{height:100%}
 body{
@@ -90,8 +133,14 @@ h2{font-size:19px;font-weight:750;letter-spacing:-.01em}
 
 /* ---- top bar ---- */
 .topbar{position:sticky;top:0;z-index:20;background:var(--paper);
-  display:flex;align-items:center;gap:12px;padding:14px 18px 10px;
+  display:flex;align-items:center;gap:12px;padding:14px 52px 10px 18px;
   border-bottom:1px solid var(--line)}
+/* Theme-Umschalter — fixer Button oben rechts, auf allen Screens erreichbar */
+.theme-btn{position:fixed;top:calc(8px + env(safe-area-inset-top,0px));right:10px;z-index:30;
+  width:34px;height:34px;border-radius:50%;border:1px solid var(--line-strong);
+  background:var(--card);color:var(--ink);font-size:15px;line-height:1;
+  display:grid;place-items:center;box-shadow:var(--shadow);cursor:pointer;opacity:.9}
+.theme-btn:active{transform:scale(.94)}
 .topbar .prog-wrap{flex:1}
 .topbar .prog-label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600}
 .bar{height:6px;background:var(--line);border-radius:99px;overflow:hidden}
@@ -222,12 +271,13 @@ a{color:var(--accent-ink)}
   <aside id="railR" class="rail"></aside>
 </div>
 <div id="toast" class="toast"></div>
+<button id="themeBtn" class="theme-btn" type="button" onclick="cycleTheme()" aria-label="Design wechseln" title="Design wechseln">🎨</button>
 
 <script>
 "use strict";
 /* ============================================================
    Coach Runner  —  rendert workout-spec, gibt workout-result
-   Single file, vanilla JS, offline-tauglich. schemaVersion 3.
+   Single file, vanilla JS, offline-tauglich. schemaVersion 6.
 
    Änderungen v1 → v2:
    - cardio strukturiert via segments[] (statt flachem durationMin+targetHr)
@@ -247,9 +297,20 @@ a{color:var(--accent-ink)}
      IM WECHSEL ausgeführt: EIN Satz (kein L/R-Split), Reps gelten je Seite, Label "/Seite (im
      Wechsel)". Schließt perSide aus (alternating gewinnt). Result-log: eine Zeile/Satz, kein side.
    - Circuit: 5s-Countdown jetzt auch vor der ersten Station (vorher nur zwischen Stationen)
+   Änderungen v5 → v6 (rein additiv, abwärtskompatibel):
+   - optionales prepSec je circuit.stations[] / mobility.poses[] sowie je interval-Step →
+     verlängert die "Bereitmachen"-Phase vor dieser Station/Pose (z.B. 20s, um vor dem
+     Handstand-Hold zur Wand zu laufen und hochzukippen). Ohne Feld gelten die Defaults (5/6/5s).
+   - Mobility: letzte Pose endet mit 3-2-1 + "done"-Klingel statt leisem soft-Ton →
+     hörbares Abschluss-Signal am Ende des Cool-Downs/Workouts.
+   Nachtrag (additiv, ohne Bump):
+   - optionales resultMailto (Top-Level, E-Mail-Adresse) → Summary zeigt "An den Coach
+     mailen"-Button: mailto mit dem Result-JSON im Body (Adresse reist in der Spec mit,
+     die App selbst bleibt personenagnostisch/frei von privaten Daten). Result wird
+     zusätzlich in die Zwischenablage kopiert, falls die Mail-App den Body kürzt.
    ============================================================ */
 
-const SCHEMA = 5;
+const SCHEMA = 6;
 const SAVE_KEY = "coachRunner.session.v2";   // v1-Bucket bewusst gewechselt, damit alte localStorage-Sessions keine Crash-Recovery auslösen
 const WD = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
 
@@ -288,6 +349,38 @@ let toastT;
 function toast(msg){ toastEl.textContent=msg; toastEl.classList.add("show");
   clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove("show"),1600); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ---------- Themes ----------
+   Umschaltbar per 🎨-Button; Wahl merkt sich in localStorage.
+   Start-Reihenfolge: gemerkte Wahl → spec.defaultTheme → "amoled" (Default). */
+const THEME_KEY = "coachRunner.theme";
+const THEMES = ["amoled","paper","sepia","contrast","coral"];   // Zyklus; amoled = Default/Fallback
+const THEME_LABEL = { amoled:"Schwarz", paper:"Papier", sepia:"Sepia", contrast:"Kontrast", coral:"Coral" };
+const THEME_BAR   = { amoled:"#000000", paper:"#F4F6F8", sepia:"#F3EBDD", contrast:"#FFFFFF", coral:"#FBF6F4" };
+let themeUserSet = false;   // true, sobald der User bewusst gewählt hat (localStorage) — dann kein spec-Override
+function applyTheme(t, persist){
+  if(THEMES.indexOf(t)<0) t="amoled";
+  document.documentElement.setAttribute("data-theme", t);
+  const meta=document.querySelector('meta[name="theme-color"]'); if(meta) meta.setAttribute("content", THEME_BAR[t]);
+  const b=document.getElementById("themeBtn"); if(b) b.title="Design: "+THEME_LABEL[t]+" (tippen zum Wechseln)";
+  if(persist){ try{ localStorage.setItem(THEME_KEY,t); }catch(e){} themeUserSet=true; }
+}
+function bootTheme(){
+  let saved=null; try{ saved=localStorage.getItem(THEME_KEY); }catch(e){}
+  themeUserSet = !!(saved && THEMES.indexOf(saved)>=0);
+  applyTheme(themeUserSet ? saved : "amoled", false);
+}
+/* Spec darf ein Default-Theme mitgeben — greift nur, wenn der User nichts gewählt hat. */
+function themeFromSpec(spec){
+  if(!themeUserSet && spec && THEMES.indexOf(spec.defaultTheme)>=0) applyTheme(spec.defaultTheme, false);
+}
+function cycleTheme(){
+  const cur = document.documentElement.getAttribute("data-theme") || "amoled";
+  const next = THEMES[(THEMES.indexOf(cur)+1+THEMES.length)%THEMES.length];
+  applyTheme(next, true);
+  toast("Design: "+THEME_LABEL[next]);
+}
+bootTheme();
 /* Cue-Block: zeigt einen Technik-/Sicherheitshinweis unter der Übung.
    cue kann ein String ODER ein String-Array sein. Array → Liste mit Punkten.
    Leeres/fehlendes cue → "" (rendert nichts). mb = margin-bottom in px. */
@@ -652,6 +745,7 @@ function doImport(){
     $("impErr").innerHTML=`<div class="note">Hinweis: Spec ist Schema v${o.schemaVersion}, App kennt v${SCHEMA}. Ich versuche es trotzdem.</div>`;
   }
   normalizeSpec(o);
+  themeFromSpec(o);
   S.spec=o;
   S.result=JSON.parse(JSON.stringify(o));
   S.result.kind="workout-result";
@@ -1410,6 +1504,7 @@ function intervalShow(s){
   }
 }
 const IV_PREP=5; // Sekunden "Bereitmachen" vor dem Intervall-Start (desynct EMOM nicht – nur einmal vorweg)
+function ivPrepSec(s){ return (s&&s.prepSec>0)?s.prepSec:IV_PREP; }   // Step kann via prepSec verlängern (v6)
 // Start (oder Wiederaufnahme nach Zurück): erst 5s Countdown, dann die erste Phase.
 function ivStart(){ S.sub.running=true; const p=S.sub.phases[S.sub.pi]; if(p) ivPrep(p); else runPhase(); }
 function ivPrepShow(s,p,sec){
@@ -1430,8 +1525,9 @@ function ivPrep(p){
   const s=S.spec.steps[S.stepIdx];
   S.sub.inPrep=true;
   cueAnnounce();                                  // "gleich geht's los"
-  ivPrepShow(s,p,IV_PREP);
-  Timer.start(IV_PREP,(rem,dur)=>{ const w=$("ivWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
+  const prep=ivPrepSec(s);
+  ivPrepShow(s,p,prep);
+  Timer.start(prep,(rem,dur)=>{ const w=$("ivWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
     ()=>{ S.sub.inPrep=false; runPhase(); }, "go");  // "go"-Alarm (inkl. 3-2-1-0) liegt am Prep-Ende = Arbeitsstart
 }
 function ivSkipPrep(){ Timer.stop(); S.sub.inPrep=false; const p=S.sub.phases[S.sub.pi]; if(p)(p.kind==="work"?cueWork():cueRest()); runPhase(); }
@@ -1446,7 +1542,7 @@ function runPhase(){
 }
 function ivPause(){ if(Timer.paused){Timer.resume();}else{Timer.pause();}
   const s=S.spec.steps[S.stepIdx];
-  if(S.sub.inPrep) ivPrepShow(s,S.sub.phases[S.sub.pi],Math.max(0,Timer.remainAtPause||IV_PREP));
+  if(S.sub.inPrep) ivPrepShow(s,S.sub.phases[S.sub.pi],Math.max(0,Timer.remainAtPause||ivPrepSec(s)));
   else intervalShow(s); }
 function ivSkip(){ Timer.stop(); S.sub.pi++; const s=S.spec.steps[S.stepIdx];
   if(S.sub.pi<S.sub.phases.length) runPhase(); else intervalLog(s); }
@@ -1478,7 +1574,7 @@ function buildCircuit(s){
   const ph=[];
   for(let r=0;r<s.rounds;r++){
     s.stations.forEach((st)=>{
-      const base={cue:st.cue,round:r,load:st.load};
+      const base={cue:st.cue,round:r,load:st.load,prep:st.prepSec};   // prepSec (v6): längere Bereitmachen-Phase
       // perSide + timed → split
       if(st.perSide && st.durationSec){
         const hold=!!st.hold;
@@ -1553,7 +1649,8 @@ function ccRun(){
 // kurze Übergangs-Phase zwischen zwei Stationen: nächste Übung ankündigen + 3-2-1-Countdown
 // (analog zur Mobility-Einnehmphase moPrep). Rein laufzeit-intern — verändert WEDER die
 // Spec/Result-Struktur NOCH die Stationsliste, nur den Ablauf in der App.
-const CC_PREP=5; // Sekunden Übergang zwischen den Übungen
+const CC_PREP=5; // Sekunden Übergang zwischen den Übungen (Default; Station kann via prepSec verlängern)
+function ccPrepSec(p){ return (p&&p.prep>0)?p.prep:CC_PREP; }
 function ccPrepShow(s,p,sec){
   setRun(`<div class="phase-rest">
     <div class="center" style="margin:6px 0"><span class="pill rest">${esc(s.label||"Core")} · Nächste Übung</span></div>
@@ -1568,9 +1665,10 @@ function ccPrepShow(s,p,sec){
 }
 function ccPrep(s,p){
   S.sub.inPrep=true; S.sub.running=true;
-  cueAnnounce();                              // 5s anläuten: "gleich geht's los"
-  ccPrepShow(s,p,CC_PREP);
-  Timer.start(CC_PREP,(rem,dur)=>{ const w=$("ccWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
+  cueAnnounce();                              // anläuten: "gleich geht's los"
+  const prep=ccPrepSec(p);
+  ccPrepShow(s,p,prep);
+  Timer.start(prep,(rem,dur)=>{ const w=$("ccWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
     ()=>{ S.sub.inPrep=false; ccRun(); }, "go");
 }
 function ccSkipPrep(){ Timer.stop(); S.sub.inPrep=false; ccRun(); }
@@ -1588,7 +1686,7 @@ function ccNextManual(){ S.sub.pi++; const s=S.spec.steps[S.stepIdx];
 }
 function ccPause(){ if(Timer.paused)Timer.resume();else Timer.pause();
   const s=S.spec.steps[S.stepIdx];
-  if(S.sub.inPrep){ ccPrepShow(s,S.sub.phases[S.sub.pi],Math.max(0,Timer.remainAtPause||CC_PREP)); }
+  if(S.sub.inPrep){ ccPrepShow(s,S.sub.phases[S.sub.pi],Math.max(0,Timer.remainAtPause||ccPrepSec(S.sub.phases[S.sub.pi]))); }
   else circuitShow(s); }
 function ccSkip(){ Timer.stop(); ccAdvance(); }
 function circuitDone(s){
@@ -1605,10 +1703,10 @@ function buildMobility(s){
   for(let r=0;r<rounds;r++){
     (s.poses||[]).forEach(p=>{
       if(p.perSide){
-        ph.push({sec:p.durationSec||60,name:p.name,side:"links",cue:p.cue,round:r});
-        ph.push({sec:p.durationSec||60,name:p.name,side:"rechts",cue:p.cue,round:r});
+        ph.push({sec:p.durationSec||60,name:p.name,side:"links",cue:p.cue,round:r,prep:p.prepSec});
+        ph.push({sec:p.durationSec||60,name:p.name,side:"rechts",cue:p.cue,round:r,prep:p.prepSec});
       } else {
-        ph.push({sec:p.durationSec||60,name:p.name,cue:p.cue,round:r});
+        ph.push({sec:p.durationSec||60,name:p.name,cue:p.cue,round:r,prep:p.prepSec});
       }
     });
     if(rest>0 && r<rounds-1) ph.push({sec:rest,name:"Pause",rest:true,round:r});
@@ -1644,7 +1742,8 @@ function mobilityShow(s){
   }
 }
 function moStart(){ S.sub.running=true; moRun(); }
-const MOB_PREP=6; // Sekunden zum Einnehmen der Pose
+const MOB_PREP=6; // Sekunden zum Einnehmen der Pose (Default; Pose kann via prepSec verlängern)
+function moPrepSec(p){ return (p&&p.prep>0)?p.prep:MOB_PREP; }
 function moRun(){
   const s=S.spec.steps[S.stepIdx], ph=S.sub.phases, p=ph[S.sub.pi];
   if(!p) return mobilityDone(s);
@@ -1671,8 +1770,9 @@ function moPrepShow(s,p,sec){
 function moPrep(s,p){
   S.sub.inPrep=true;
   cueAnnounce();                              // anläuten: nächste Pose kommt
-  moPrepShow(s,p,MOB_PREP);
-  Timer.start(MOB_PREP,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
+  const prep=moPrepSec(p);
+  moPrepShow(s,p,prep);
+  Timer.start(prep,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,"bereitmachen",mmss(rem)); },
     ()=>{ moHold(s,p); }, "go");
 }
 function moSkipPrep(){ Timer.stop(); const s=S.spec.steps[S.stepIdx]; moHold(s,S.sub.phases[S.sub.pi]); }
@@ -1680,18 +1780,21 @@ function moSkipPrep(){ Timer.stop(); const s=S.spec.steps[S.stepIdx]; moHold(s,S
 function moHold(s,p){
   S.sub.inPrep=false;
   mobilityShow(s);
+  // Letzte Phase → "done"-Klingel (inkl. 3-2-1) statt leisem soft-Ton: hörbares
+  // Abschluss-Signal am Ende des Cool-Downs (v6). Alle anderen Holds bleiben ruhig.
+  const endKind=S.sub.phases[S.sub.pi+1]?"soft":"done";
   Timer.start(p.sec,(rem,dur)=>{ const w=$("moWrap"); if(w)w.innerHTML=ring(rem/dur,p.rest?"pause":"halten",mmss(rem)); },
-    ()=>{ moAdvance(); }, "soft");
+    ()=>{ moAdvance(); }, endKind);
 }
 function moAdvance(){ S.sub.pi++; const s=S.spec.steps[S.stepIdx];
   if(S.sub.pi<S.sub.phases.length) moRun(); else mobilityDone(s); }
 function moPause(){
   if(Timer.paused)Timer.resume();else Timer.pause();
   const s=S.spec.steps[S.stepIdx];
-  if(S.sub.inPrep){ moPrepShow(s,S.sub.phases[S.sub.pi],Math.max(0,Timer.remainAtPause||MOB_PREP)); }
+  if(S.sub.inPrep){ moPrepShow(s,S.sub.phases[S.sub.pi],Math.max(0,Timer.remainAtPause||moPrepSec(S.sub.phases[S.sub.pi]))); }
   else { mobilityShow(s); }
 }
-function moSkip(){ Timer.stop(); moAdvance(); }
+function moSkip(){ Timer.stop(); if(!S.sub.phases[S.sub.pi+1]) cueDone(); moAdvance(); }   // Skip der letzten Pose klingelt trotzdem ab
 function mobilityDone(s){
   Timer.stop(); const rs=S.result.steps[S.stepIdx]; rs.status="done"; rs.done=true;
   setRun(`<div class="eyebrow">Mobility fertig</div>
@@ -2030,9 +2133,11 @@ function renderSummary(doneSteps){
       <textarea class="txt" id="sumNote" rows="3" placeholder="Wie war's? Was war zu leicht/schwer?" oninput="refreshResultPreview()"></textarea></div>
     <div class="card"><div class="eyebrow" style="margin-bottom:8px">Result-Block</div>
       <p class="muted" style="font-size:13.5px;margin-bottom:10px">An den Coach schicken — er schreibt daraus dein Logbuch.</p>
-      ${navigator.share?`<button class="btn good" onclick="shareResult()">📤 Teilen</button>
+      ${S.spec&&S.spec.resultMailto?`<button class="btn good" onclick="mailResult()">📧 An den Coach mailen</button>
+        <div style="height:9px"></div>`:""}
+      ${navigator.share?`<button class="btn ${S.spec&&S.spec.resultMailto?"sec sm":"good"}" onclick="shareResult()">📤 Teilen</button>
         <div style="height:9px"></div>
-        <button class="btn sec sm" onclick="copyResult()">📋 Kopieren</button>`:`<button class="btn good" onclick="copyResult()">📋 Kopieren</button>`}
+        <button class="btn sec sm" onclick="copyResult()">📋 Kopieren</button>`:`<button class="btn ${S.spec&&S.spec.resultMailto?"sec sm":"good"}" onclick="copyResult()">📋 Kopieren</button>`}
       <div style="height:9px"></div>
       <button class="btn sec sm" onclick="downloadResult()">Als Datei sichern</button>
       <details style="margin-top:12px">
@@ -2066,11 +2171,30 @@ async function shareResult(){
   }
   copyToClipboard(txt);
 }
-function copyToClipboard(txt){
-  const done=()=>{toast("Kopiert ✓ — in den Coach-Chat einfügen");};
+function copyToClipboard(txt,msg){
+  const done=()=>{toast(msg||"Kopiert ✓ — in den Coach-Chat einfügen");};
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(txt).then(done,()=>fallbackCopy(txt,done));
   } else { fallbackCopy(txt,done); }
+}
+// mailto an den Coach: Adresse kommt aus der Spec (resultMailto) — die App bleibt frei
+// von privaten Daten. Öffnet die Standard-Mail-App (iOS: als Default eingestellte App,
+// z.B. Proton Mail) mit Betreff + Result-JSON vorausgefüllt. Das JSON liegt zusätzlich
+// in der Zwischenablage, falls die Mail-App lange mailto-Bodies kürzt; bei sehr langen
+// Results übergibt mailto nur einen kurzen Hinweis und der User fügt aus der Ablage ein.
+const MAILTO_MAX=16000;   // konservatives Limit für die gesamte mailto-URI
+function mailResult(){
+  const to=S.spec&&S.spec.resultMailto; if(!to) return;
+  const n=$("sumNote"); if(n) S.result.summary.overallNotes=n.value.trim();
+  S.result.schemaVersion=SCHEMA;
+  const json="```json\n"+JSON.stringify(S.result)+"\n```";   // kompakt: mailto-Platz sparen
+  copyToClipboard(json,"Mail geöffnet — Result liegt auch in der Zwischenablage 📋");
+  const subj=("workout-result · "+(S.result.meta.focus||"Workout")+" · "+(S.result.meta.date||"")).trim();
+  const mk=b=>"mailto:"+encodeURIComponent(to)+"?subject="+encodeURIComponent(subj)+"&body="+encodeURIComponent(b);
+  let uri=mk(json+"\n");
+  if(uri.length>MAILTO_MAX)
+    uri=mk("Das workout-result-JSON war zu lang für die mailto-Übergabe — es liegt in der Zwischenablage: hier einfügen. 📋\n");
+  location.href=uri;
 }
 function copyResult(){ copyToClipboard(resultJSON()); }
 function fallbackCopy(txt,done){ const ta=document.createElement("textarea"); ta.value=txt; ta.style.position="fixed"; ta.style.opacity="0";
@@ -2183,6 +2307,7 @@ function loadFromHash(){
     return false;
   }
   normalizeSpec(o);
+  themeFromSpec(o);
   S.spec=o;
   S.result=JSON.parse(JSON.stringify(o));
   S.result.kind="workout-result";
