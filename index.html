@@ -144,7 +144,7 @@ h2{font-size:19px;font-weight:750;letter-spacing:-.01em}
 
 /* ---- top bar ---- */
 .topbar{position:sticky;top:0;z-index:20;background:var(--paper);
-  display:flex;align-items:center;gap:12px;padding:14px 52px 10px 18px;
+  display:flex;align-items:center;gap:10px;padding:9px 54px 9px 14px;
   border-bottom:1px solid var(--line)}
 /* Theme-Umschalter — fixer Button oben rechts, auf allen Screens erreichbar.
    SVG-Icon statt Emoji (Emoji rendert auf iOS als bunter Fremdkörper) + Milchglas-Fläche. */
@@ -158,11 +158,11 @@ h2{font-size:19px;font-weight:750;letter-spacing:-.01em}
 }
 .theme-btn:active{transform:scale(.92)}
 .topbar .prog-wrap{flex:1}
-.topbar .prog-label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600}
-.bar{height:6px;background:var(--line);border-radius:99px;overflow:hidden}
+.topbar .prog-label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600}
+.bar{height:5px;background:var(--line);border-radius:99px;overflow:hidden}
 .bar > i{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .35s ease}
-.iconbtn{width:40px;height:40px;border-radius:12px;border:1px solid var(--line-strong);
-  background:var(--card);font-size:17px;display:grid;place-items:center;color:var(--ink)}
+.iconbtn{width:38px;height:38px;border-radius:11px;border:1px solid var(--line-strong);
+  background:var(--card);font-size:16px;display:grid;place-items:center;color:var(--ink)}
 .iconbtn:disabled{opacity:.32}
 .iconbtn:active:not(:disabled){background:var(--paper)}
 
@@ -466,7 +466,18 @@ function cueDisclosure(cue,pinned){
       <span>ℹ︎ Hinweis</span><span class="disc-caret">${open?'▲':'▼'}</span></button>
     <div class="disc-body">${body}</div></div>`;
 }
-function toggleCue(){ S.sub.cueOpen=!S.sub.cueOpen; renderStep(); }
+/* Nur die Klasse am DOM togglen — KEIN renderStep(): das würde den Screen neu bauen
+   und die Scroll-Position auf 0 setzen (iOS: "springt nach oben"). */
+function toggleCue(){
+  S.sub.cueOpen=!S.sub.cueOpen;
+  const d=document.querySelector(".disc");
+  if(d){
+    d.classList.toggle("open",S.sub.cueOpen);
+    const c=d.querySelector(".disc-caret"); if(c) c.textContent=S.sub.cueOpen?"▲":"▼";
+    return;
+  }
+  renderStep();
+}
 
 /* ---------- audio ----------
    iOS suspendiert den AudioContext aggressiv (Screen-Lock, Hintergrund,
@@ -874,11 +885,13 @@ function topbar(){
   const tot=S.spec.steps.length, i=S.stepIdx;
   const frac=Math.min(1,(i)/tot);
   const backDisabled = !canGoBack();
+  // Bewusst OHNE Übungsnamen: der steht groß im Inhalt — in der Topbar bricht er nur
+  // um und macht die Leiste hoch. Hier lebt nur die Orientierung (Schritt x/y + Balken).
   return `<div class="topbar">
     <button class="iconbtn" onclick="confirmQuit()">✕</button>
     <button class="iconbtn" onclick="goBack()" ${backDisabled?'disabled':''} aria-label="Einen Schritt zurück">‹</button>
     <div class="prog-wrap">
-      <div class="prog-label"><span>Schritt ${i+1} / ${tot}</span><span>${esc(stepTitle(S.spec.steps[i]))}</span></div>
+      <div class="prog-label"><span>Schritt ${i+1} / ${tot}</span></div>
       <div class="bar"><i style="width:${frac*100}%"></i></div>
     </div></div>`;
 }
@@ -1195,7 +1208,7 @@ function renderStrength(s){
     const label = per&&sideIdx===0 ? "Links fertig → rechts"
                 : (setNo+1<s.sets?"Satz fertig → Pause":"Satz fertig");
     setBar(`<div class="btn-row">
-      <button class="btn sec sm" style="flex:none;width:46%" onclick="skipExercise()">Übung überspringen</button>
+      <button class="btn sec sm" style="flex:none;width:38%" onclick="skipExercise()">Überspringen</button>
       <button class="btn" onclick="logSet()">${label}</button>
     </div>`);
   }
@@ -1359,7 +1372,7 @@ function renderPlyo(s){
     </div>`);
   } else {
     setBar(`<div class="btn-row">
-      <button class="btn sec sm" style="flex:none;width:46%" onclick="skipExercise()">Übung überspringen</button>
+      <button class="btn sec sm" style="flex:none;width:38%" onclick="skipExercise()">Überspringen</button>
       <button class="btn" onclick="logPlyo()">${setNo+1<s.sets?"Satz fertig → Pause":"Satz fertig"}</button>
     </div>`);
   }
