@@ -351,6 +351,22 @@ a{color:var(--accent-ink)}
      Timer-Ende werden die gerade klingenden Töne aus _sched entlassen, bevor der
      nächste scheduleAlarm clearScheduled aufruft (s. Timer.loop).
    - Feinschliff: Hover-States (Desktop), :focus-visible, sanfte Einblendung je Screen.
+   Nachtrag (Audio iOS, ohne Bump — keine Spec-/Result-Änderung):
+   - Hauptursache "kein Ton in iOS Safari": reines Web-Audio läuft in der
+     ambient-Audio-Session und wird vom Klingel-/Stummschalter komplett
+     stummgeschaltet. Gegenmaßnahme: praktisch stumme <audio>-Loop hebt die
+     Session in die playback-Kategorie (abschaltbar, s. Ton-Karte).
+   - AudioContext-Lifecycle gehärtet: audioReady wird erst gesetzt, wenn der
+     Context wirklich "running" ist; resume() wird als Promise ausgewertet;
+     defekte Contexts werden vor dem Neuaufbau geschlossen (iOS limitiert die
+     Zahl gleichzeitiger Contexts); onstatechange primet nach Interrupts neu.
+   - Töne kamen zu spät / in der falschen Phase: der End-Alarm liegt auf der
+     Audio-Uhr, die iOS bei jeder Session-Unterbrechung einfriert, während die
+     Anzeige auf performance.now() weiterläuft. Der Timer vergleicht beide Uhren
+     jetzt je Frame (DRIFT_TOL) und legt den Alarm bei Stillstand neu; am
+     Phasenende werden nur noch die wirklich klingenden Töne freigegeben,
+     verspätete verworfen (releaseSounding).
+   - Ton-Selbsttest im Ablauf-Screen vor dem Start.
    ============================================================ */
 
 const SCHEMA = 6;
@@ -486,6 +502,47 @@ function toggleCue(){
    vor jedem Ton einen resume()-Versuch starten. Töne werden als Sequenz
    relativ zu AC.currentTime geplant (zuverlässiger als setTimeout-Ketten). */
 let AC=null, audioReady=false, _bus=null;
+
+/* ---------- Stumm-Schalter-Umgehung (iOS) ----------
+   WICHTIGSTE iOS-Eigenheit: reines Web-Audio landet in der "ambient"
+   Audio-Session. Die wird vom Klingel-/Stummschalter am iPhone KOMPLETT
+   stummgeschaltet — die App läuft, die Oszillatoren laufen, man hört nichts.
+   Zusätzlich beendet iOS eine ambient-Session früh, sobald der Bildschirm
+   aus geht. Abhilfe: ein dauerhaft laufendes <audio>-Element mit einer
+   praktisch stummen Loop hebt die Seite in die "playback"-Kategorie — dann
+   sind die Beeps auch bei umgelegtem Stummschalter hörbar und die Session
+   bleibt wach. Nebenwirkung (je nach iOS-Version): Musik anderer Apps kann
+   unterbrochen/geduckt werden — deshalb abschaltbar (Schalter im Ablauf-Screen). */
+const BYPASS_KEY="coachRunner.silentBypass";
+// Safari im privaten Modus wirft bei localStorage — hier oben liefe der Fehler
+// auf Top-Level und würde das ganze Skript abbrechen.
+let SILENT_BYPASS = (()=>{ try{ return localStorage.getItem(BYPASS_KEY)!=="0"; }catch(e){ return true; } })();
+let _sil=null, _silURL=null;
+// 2 s Mono-PCM (8 kHz) mit minimaler Restamplitude (~-90 dBFS). Echte Null-Stille
+// wird von iOS teils als "spielt nichts" gewertet und schaltet die Session nicht um.
+function _silenceURL(){
+  const sr=8000, n=sr*2, len=44+n*2, buf=new ArrayBuffer(len), v=new DataView(buf);
+  const put=(off,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(off+i,s.charCodeAt(i)); };
+  put(0,"RIFF"); v.setUint32(4,len-8,true); put(8,"WAVEfmt ");
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  put(36,"data"); v.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++) v.setInt16(44+i*2,(i%2)?1:-1,true);
+  return URL.createObjectURL(new Blob([buf],{type:"audio/wav"}));
+}
+function silenceOn(){
+  if(!SILENT_BYPASS) return;
+  try{
+    if(!_sil){
+      _sil=document.createElement("audio");
+      _sil.loop=true; _sil.preload="auto"; _sil.setAttribute("playsinline","");
+      _sil.src=_silURL||(_silURL=_silenceURL());
+      _sil.style.display="none"; document.body.appendChild(_sil);
+    }
+    if(_sil.paused){ const p=_sil.play(); if(p&&p.catch) p.catch(()=>{}); }
+  }catch(e){}
+}
+function silenceOff(){ try{ if(_sil) _sil.pause(); }catch(e){} }
 // Globaler Lautstärke-Boost für ALLE Töne (damit sie über Musik hörbar sind).
 // Alle Töne laufen durch _bus → Limiter → Ausgang; der Limiter fängt Übersteuern
 // ab, sodass wir kräftig boosten können, ohne dass es kratzt/verzerrt.
@@ -500,16 +557,36 @@ function buildBus(){
     _bus.connect(lim); lim.connect(AC.destination);
   }catch(e){ _bus=null; }
 }
+// Der stumme 1-Sample-Buffer entsperrt die Pipeline — aber NUR, wenn der Context
+// zu dem Zeitpunkt wirklich läuft. Früher wurde audioReady auch gesetzt, während
+// resume() noch lief; dann fand die echte Entsperrung nie mehr statt.
+function primeAudio(){
+  if(!AC || AC.state!=="running" || audioReady) return;
+  try{
+    const b=AC.createBuffer(1,1,22050), s=AC.createBufferSource();
+    s.buffer=b; s.connect(_bus||AC.destination); s.start(0);
+    audioReady=true;
+  }catch(e){}
+}
 function unlockAudio(){
   try{
-    if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
-    buildBus();
-    if(AC.state!=="running") AC.resume();
-    if(!audioReady){
-      const b=AC.createBuffer(1,1,22050), s=AC.createBufferSource();
-      s.buffer=b; s.connect(_bus||AC.destination); s.start(0);
-      audioReady=true;
+    // "closed" ist endgültig — resume() bringt nichts, Pipeline neu aufbauen.
+    if(AC && AC.state==="closed"){ AC=null; _bus=null; audioReady=false; }
+    if(!AC){
+      const Ctx=window.AudioContext||window.webkitAudioContext;
+      if(!Ctx) return;
+      AC=new Ctx();
+      // Fällt der Context von selbst zurück (iOS-Interrupt: Anruf, Siri, anderes
+      // Audio), beim nächsten Wiederanlaufen erneut primen.
+      AC.onstatechange=()=>{ if(AC&&AC.state==="running") primeAudio(); };
     }
+    buildBus();
+    silenceOn();                       // Audio-Session hochstufen (Stumm-Schalter)
+    if(AC.state!=="running"){
+      const p=AC.resume();
+      if(p&&p.then) p.then(primeAudio,()=>{});
+    }
+    primeAudio();
   }catch(e){}
 }
 // jede Nutzer-Interaktion hält die Audio-Pipeline wach
@@ -518,17 +595,49 @@ function unlockAudio(){
 });
 function ensureAudio(){
   try{
-    if(!AC){ unlockAudio(); return; }
-    // iOS Safari kann den Context in "closed" stellen (nach langem Idle / Suspend).
-    // Dann ist resume() nutzlos — Pipeline komplett neu aufbauen.
-    if(AC.state==="closed"){
-      try{ AC=null; _bus=null; audioReady=false; }catch(_){}
-      unlockAudio(); return;
+    if(!AC || AC.state==="closed"){ unlockAudio(); return; }
+    silenceOn();
+    if(AC.state!=="running"){
+      const p=AC.resume();
+      if(p&&p.then) p.then(primeAudio,()=>{});
     }
-    if(AC.state!=="running") AC.resume();
   }catch(e){
+    // Defekten Context erst schließen, sonst sammeln sich Instanzen an und iOS
+    // verweigert irgendwann jeden weiteren `new AudioContext()` → Dauer-Stille.
+    try{ if(AC) AC.close(); }catch(_){}
     try{ AC=null; _bus=null; audioReady=false; unlockAudio(); }catch(_){}
   }
+}
+// Ist der Ton gerade wirklich spielbereit? (für Statusanzeige/Selbsttest)
+function audioLive(){ return !!(AC && AC.state==="running" && audioReady); }
+
+/* Ton-Karte im Ablauf-Screen: Selbsttest VOR dem Workout (statt mitten im Intervall
+   festzustellen, dass nichts kommt) + Schalter für die Stumm-Umgehung. */
+function audioCard(){
+  return `<div class="card" id="audioCard">
+    <div class="eyebrow" style="margin-bottom:8px">Ton</div>
+    <div class="chips" style="margin-bottom:10px">
+      <button type="button" class="chip" onclick="testAudio()">🔊 Ton testen</button>
+      <button type="button" class="chip ${SILENT_BYPASS?"on":""}" onclick="toggleSilentBypass()">Stumm-Schalter überspielen</button>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:0">${SILENT_BYPASS
+      ? "An: Signaltöne kommen auch, wenn das iPhone auf lautlos steht. Stoppt dadurch deine Musik, hier ausschalten."
+      : "Aus: mischt sich mit anderer Musik — bei umgelegtem Stummschalter bleibt das iPhone still."}</p>
+  </div>`;
+}
+function toggleSilentBypass(){
+  SILENT_BYPASS=!SILENT_BYPASS;
+  try{ localStorage.setItem(BYPASS_KEY,SILENT_BYPASS?"1":"0"); }catch(e){}
+  if(SILENT_BYPASS) silenceOn(); else silenceOff();
+  const c=$("audioCard"); if(c) c.outerHTML=audioCard();
+  toast(SILENT_BYPASS?"Töne auch im Stumm-Modus":"Stumm-Modus wird respektiert");
+}
+function testAudio(){
+  unlockAudio(); cueWork();
+  // resume() ist asynchron — Status erst nach kurzem Moment bewerten.
+  setTimeout(()=>toast(audioLive()
+    ? "Ton läuft. Nichts gehört? Lautstärke lauter stellen"
+    : "Ton noch blockiert — Bildschirm antippen, dann erneut testen"),300);
 }
 // Eine "Stimme" zur absoluten Audio-Zeit t0, im Charakter klassischer Box-/Interval-Timer:
 // satter Sinus-Grundton + Rechteck-Kante (Durchsetzung) + leise Sub-Oktave (Wucht), alles
@@ -581,10 +690,27 @@ function vibrate(p){ if(navigator.vibrate) try{navigator.vibrate(p);}catch(e){} 
    Tab nicht aktiv ist (Voraussetzung: Bildschirm bleibt per Wake-Lock an,
    damit der AudioContext nicht suspendiert wird). Die geplanten Töne sind
    kündbar: Pause / Skip / +30s planen sie neu. */
-let _sched=[];
-function clearScheduled(){ _sched.forEach(o=>{ try{o.stop(0);}catch(e){} try{o.disconnect();}catch(e){} }); _sched=[]; }
+let _sched=[];   // {o, at} — at = geplante Startzeit auf der AUDIO-Uhr
+function _kill(e){ try{e.o.stop(0);}catch(_){} try{e.o.disconnect();}catch(_){} }
+function clearScheduled(){ _sched.forEach(_kill); _sched=[]; }
+// Am natürlichen Timer-Ende: den gerade anlaufenden Alarm freigeben (nicht stoppen),
+// damit er beim Phasenwechsel nicht abreißt — inklusive der Folgetöne des Motivs, die
+// definitionsgemäß Sekundenbruchteile später liegen (ALARM_SPAN). Alles, was WEITER in
+// der Zukunft liegt, kann nur der Rest einer Planung sein, deren Audio-Uhr stillstand:
+// das wird verworfen, sonst klingelt die letzte Phase in die nächste hinein.
+const ALARM_SPAN=1.2;   // s — längstes Motiv (done) misst ~0.8 s
+function releaseSounding(){
+  if(!AC){ _sched=[]; return; }
+  const horizon=AC.currentTime+ALARM_SPAN;
+  _sched.forEach(e=>{ if(e.at>horizon) _kill(e); });
+  _sched=[];
+}
 function schedTone(freq,atSec,dur,vol,type){
-  if(!AC) return; try{ _osc(freq,AC.currentTime+Math.max(0,atSec),dur,vol,type).forEach(o=>_sched.push(o)); }catch(e){}
+  if(!AC) return;
+  try{
+    const at=AC.currentTime+Math.max(0,atSec);
+    _osc(freq,at,dur,vol,type).forEach(o=>_sched.push({o,at}));
+  }catch(e){}
 }
 // Hintergrund-sichere Gegenstücke zu den cue*-Motiven (identische Notenwahl).
 // go/rest beginnen bei Null mit kräftigem A5 — höher als die "1" (G5) → klarer Null-Akzent.
@@ -619,36 +745,60 @@ document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==
 window.addEventListener("pageshow",()=>{ unlockAudio(); if(S.screen==="run") keepAwake(); });
 window.addEventListener("focus",()=>{ if(S.screen==="run") keepAwake(); });
 
-/* ---------- timer engine ---------- */
+/* ---------- timer engine ----------
+   ZWEI UHREN: die Anzeige läuft auf performance.now() (Wanduhr), die Töne auf
+   AC.currentTime (Audio-Uhr). iOS friert die Audio-Uhr ein, sobald es die
+   Audio-Session unterbricht (Bildschirm aus, App-Wechsel, Anruf, Interrupt) —
+   die Wanduhr läuft weiter. Ein vorab geplanter Alarm feuert dann genau um die
+   Stillstandsdauer ZU SPÄT, also mitten in der nächsten Phase. Deshalb prüft der
+   Loop jeden Frame, ob beide Uhren noch synchron laufen, und legt den Alarm bei
+   Drift auf die verbleibende Wandzeit neu. */
+const DRIFT_TOL=0.20;   // s Auseinanderlaufen, ab dem neu geplant wird
 const Timer = {
   raf:null, endsAt:0, dur:0, onTick:null, onDone:null, paused:false, remainAtPause:0, endKind:null,
+  _wallMark:0, _audMark:0,
   start(durSec,onTick,onDone,endKind){
     this.stop(); this.dur=durSec; this.endsAt=performance.now()+durSec*1000;
     this.onTick=onTick; this.onDone=onDone; this.paused=false; this.endKind=endKind||null;
-    if(this.endKind) scheduleAlarm(this.endKind,durSec);   // End-Ton vorab auf die Audio-Uhr legen
-    keepAwake();                                           // Bildschirm während des Timers wach halten
+    if(this.endKind) this.arm(durSec);   // End-Ton vorab auf die Audio-Uhr legen
+    keepAwake();                         // Bildschirm während des Timers wach halten
     this.loop();
+  },
+  // Alarm (neu) planen und die Referenzpunkte beider Uhren setzen
+  arm(remainSec){
+    scheduleAlarm(this.endKind,remainSec);
+    this._wallMark=performance.now(); this._audMark=AC?AC.currentTime:0;
+  },
+  // Audio-Uhr gegen Wanduhr prüfen; bei Stillstand Alarm auf Restzeit neu legen
+  checkDrift(remain){
+    if(!this.endKind || !AC || AC.state!=="running") return;
+    const wall=(performance.now()-this._wallMark)/1000, aud=AC.currentTime-this._audMark;
+    if(wall-aud>DRIFT_TOL && remain>0.15) this.arm(remain);
   },
   loop(){
     const step=()=>{
       if(this.paused) return;
       const remain=(this.endsAt-performance.now())/1000;
       if(this.onTick) this.onTick(Math.max(0,remain),this.dur);
+      this.checkDrift(remain);
       if(remain<=0){
         // Natürliches Ende: der vorab geplante End-Alarm klingt JETZT. Ihn aus _sched
         // entlassen (nicht stoppen!), bevor stop()/der nächste Timer.start ihn per
         // clearScheduled abwürgen würde — sonst reißt der Ton beim Rundenwechsel ab.
-        // Die Oszillatoren stoppen sich selbst (o.stop() ist beim Planen gesetzt).
-        _sched.length=0;
+        // Töne, die trotz allem noch in der Zukunft liegen, werden verworfen statt
+        // freigegeben (releaseSounding) — sie wären nur noch ein Ton zur falschen Zeit.
+        releaseSounding();
         this.stop(); if(this.onDone) this.onDone(); return;
       }
       this.raf=requestAnimationFrame(step);
     };
     this.raf=requestAnimationFrame(step);
   },
-  pause(){ if(this.paused||!this.dur)return; this.paused=true; this.remainAtPause=(this.endsAt-performance.now())/1000; cancelAnimationFrame(this.raf); clearScheduled(); },
-  resume(){ if(!this.paused)return; this.paused=false; this.endsAt=performance.now()+this.remainAtPause*1000; if(this.endKind) scheduleAlarm(this.endKind,this.remainAtPause); this.loop(); },
-  add(sec){ this.endsAt+=sec*1000; if(this.endKind) scheduleAlarm(this.endKind,(this.endsAt-performance.now())/1000); },
+  remaining(){ return (this.endsAt-performance.now())/1000; },
+  running(){ return !!this.raf && !this.paused; },
+  pause(){ if(this.paused||!this.dur)return; this.paused=true; this.remainAtPause=this.remaining(); cancelAnimationFrame(this.raf); clearScheduled(); },
+  resume(){ if(!this.paused)return; this.paused=false; this.endsAt=performance.now()+this.remainAtPause*1000; if(this.endKind) this.arm(this.remainAtPause); this.loop(); },
+  add(sec){ this.endsAt+=sec*1000; if(this.endKind) this.arm(this.remaining()); },
   stop(){ cancelAnimationFrame(this.raf); this.raf=null; this.dur=0; this.paused=false; this.endKind=null; clearScheduled(); },
 };
 // count-up (cardio)
@@ -850,7 +1000,8 @@ function renderReady(){
         ${rd.sleep?`<span class="pill">😴 ${esc(rd.sleep)}</span>`:""}
         ${rd.soreness?`<span class="pill">💪 ${esc(rd.soreness)}</span>`:""}
       </div></div>`:""}
-    <div class="card"><div class="eyebrow" style="margin-bottom:6px">Ablauf</div>${rows}</div>`);
+    <div class="card"><div class="eyebrow" style="margin-bottom:6px">Ablauf</div>${rows}</div>
+    ${audioCard()}`);
   setBar(`<button class="btn" onclick="startWorkout()">Los geht's</button>`);
 }
 function stepMetaShort(s){
@@ -2157,6 +2308,7 @@ function carryLog(){ const rs=S.result.steps[S.stepIdx]; rs.log.push({done:true}
 function finishWorkout(){ S.screen="summary"; buildSummary("completed"); }
 function buildSummary(status){
   Timer.stop(); UpTimer.stop();
+  silenceOff();   // Audio-Session freigeben: Musik-Apps bekommen die Kontrolle zurück
   const r=S.result, m=r.meta||(r.meta={});
   const now=new Date();
   m.date=now.toISOString().slice(0,10); m.weekday=WD[now.getDay()];
@@ -2317,7 +2469,7 @@ function hardQuit(){
   </div>`);
   setBar(``);
 }
-function reallyHardQuit(){ clearSaved(); renderImport(); }
+function reallyHardQuit(){ clearSaved(); silenceOff(); renderImport(); }
 
 /* ============================================================
    autosave (crash recovery only)
