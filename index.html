@@ -352,10 +352,11 @@ a{color:var(--accent-ink)}
      nächste scheduleAlarm clearScheduled aufruft (s. Timer.loop).
    - Feinschliff: Hover-States (Desktop), :focus-visible, sanfte Einblendung je Screen.
    Nachtrag (Audio iOS, ohne Bump — keine Spec-/Result-Änderung):
-   - Hauptursache "kein Ton in iOS Safari": reines Web-Audio läuft in der
-     ambient-Audio-Session und wird vom Klingel-/Stummschalter komplett
-     stummgeschaltet. Gegenmaßnahme: praktisch stumme <audio>-Loop hebt die
-     Session in die playback-Kategorie (abschaltbar, s. Ton-Karte).
+   - Kein Ton in iOS Safari bei umgelegtem Stummschalter: reines Web-Audio läuft
+     in der ambient-Session, die der Klingel-/Stummschalter stummschaltet. Optionale
+     Umgehung: praktisch stumme <audio>-Loop → playback-Kategorie. DEFAULT AUS, weil
+     playback exklusiv ist und Spotify & Co. pausiert; ambient dagegen mischt sich
+     mit der Musik. Opt-in "Ohne Musik trainieren" für Training ohne Begleitmusik.
    - AudioContext-Lifecycle gehärtet: audioReady wird erst gesetzt, wenn der
      Context wirklich "running" ist; resume() wird als Promise ausgewertet;
      defekte Contexts werden vor dem Neuaufbau geschlossen (iOS limitiert die
@@ -503,20 +504,22 @@ function toggleCue(){
    relativ zu AC.currentTime geplant (zuverlässiger als setTimeout-Ketten). */
 let AC=null, audioReady=false, _bus=null;
 
-/* ---------- Stumm-Schalter-Umgehung (iOS) ----------
-   WICHTIGSTE iOS-Eigenheit: reines Web-Audio landet in der "ambient"
-   Audio-Session. Die wird vom Klingel-/Stummschalter am iPhone KOMPLETT
-   stummgeschaltet — die App läuft, die Oszillatoren laufen, man hört nichts.
-   Zusätzlich beendet iOS eine ambient-Session früh, sobald der Bildschirm
-   aus geht. Abhilfe: ein dauerhaft laufendes <audio>-Element mit einer
-   praktisch stummen Loop hebt die Seite in die "playback"-Kategorie — dann
-   sind die Beeps auch bei umgelegtem Stummschalter hörbar und die Session
-   bleibt wach. Nebenwirkung (je nach iOS-Version): Musik anderer Apps kann
-   unterbrochen/geduckt werden — deshalb abschaltbar (Schalter im Ablauf-Screen). */
+/* ---------- Stumm-Schalter-Umgehung (iOS) — OPT-IN ----------
+   iOS-Eigenheit: reines Web-Audio landet in der "ambient" Audio-Session. Die
+   MISCHT sich mit anderer Musik (Spotify läuft weiter, Beeps oben drauf) — wird
+   aber vom Klingel-/Stummschalter am iPhone stummgeschaltet.
+   Wer den Stummschalter überstimmen will, kann eine dauerhaft laufende, praktisch
+   stumme <audio>-Loop zuschalten: die hebt die Seite in die "playback"-Kategorie,
+   dann sind die Beeps auch bei umgelegtem Schalter hörbar. PREIS: playback ist
+   exklusiv — Musik anderer Apps (Spotify) wird dabei pausiert/verdrängt. Beides
+   zugleich (mischen UND Stummschalter überstimmen) gibt Safari auf iOS nicht her.
+   Deshalb DEFAULT AUS: Musik läuft ungestört weiter, Töne folgen dem Schalter.
+   Nur wer OHNE Musik trainiert, schaltet die Umgehung im Ablauf-Screen ein. */
 const BYPASS_KEY="coachRunner.silentBypass";
+// Opt-in: nur aktiv, wenn explizit eingeschaltet ("1"). Default aus → mischt mit Spotify.
 // Safari im privaten Modus wirft bei localStorage — hier oben liefe der Fehler
 // auf Top-Level und würde das ganze Skript abbrechen.
-let SILENT_BYPASS = (()=>{ try{ return localStorage.getItem(BYPASS_KEY)!=="0"; }catch(e){ return true; } })();
+let SILENT_BYPASS = (()=>{ try{ return localStorage.getItem(BYPASS_KEY)==="1"; }catch(e){ return false; } })();
 let _sil=null, _silURL=null;
 // 2 s Mono-PCM (8 kHz) mit minimaler Restamplitude (~-90 dBFS). Echte Null-Stille
 // wird von iOS teils als "spielt nichts" gewertet und schaltet die Session nicht um.
@@ -618,11 +621,11 @@ function audioCard(){
     <div class="eyebrow" style="margin-bottom:8px">Ton</div>
     <div class="chips" style="margin-bottom:10px">
       <button type="button" class="chip" onclick="testAudio()">🔊 Ton testen</button>
-      <button type="button" class="chip ${SILENT_BYPASS?"on":""}" onclick="toggleSilentBypass()">Stumm-Schalter überspielen</button>
+      <button type="button" class="chip ${SILENT_BYPASS?"on":""}" onclick="toggleSilentBypass()">Ohne Musik trainieren</button>
     </div>
     <p class="muted" style="font-size:12.5px;margin:0">${SILENT_BYPASS
-      ? "An: Signaltöne kommen auch, wenn das iPhone auf lautlos steht. Stoppt dadurch deine Musik, hier ausschalten."
-      : "Aus: mischt sich mit anderer Musik — bei umgelegtem Stummschalter bleibt das iPhone still."}</p>
+      ? "Signaltöne kommen auch bei lautlos gestelltem iPhone — pausiert aber Spotify & Co. Trainierst du mit Musik: hier ausschalten."
+      : "Standard: Töne laufen parallel zu Spotify & Co., Musik bleibt an. Sie folgen dem Klingel-/Stummschalter — für Ton also nicht auf lautlos stellen."}</p>
   </div>`;
 }
 function toggleSilentBypass(){
@@ -630,7 +633,7 @@ function toggleSilentBypass(){
   try{ localStorage.setItem(BYPASS_KEY,SILENT_BYPASS?"1":"0"); }catch(e){}
   if(SILENT_BYPASS) silenceOn(); else silenceOff();
   const c=$("audioCard"); if(c) c.outerHTML=audioCard();
-  toast(SILENT_BYPASS?"Töne auch im Stumm-Modus":"Stumm-Modus wird respektiert");
+  toast(SILENT_BYPASS?"Töne auch im Stumm-Modus — Musik pausiert":"Musik läuft parallel weiter");
 }
 function testAudio(){
   unlockAudio(); cueWork();
