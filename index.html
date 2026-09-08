@@ -83,7 +83,9 @@ body{
 .rail{display:none}                /* mobil + schmaler Desktop: keine Seitenspalten */
 #topbar:empty{display:none}
 #actionbar:empty{display:none}
-.scroll{flex:1;overflow-y:auto;padding:16px 18px calc(112px + var(--safe-b));
+/* min-height:0 — sonst wehrt sich der Flex-Default (min-height:auto) gegen das
+   Schrumpfen und lange Inhalte drucken die Actionbar aus dem Viewport */
+.scroll{flex:1;min-height:0;overflow-y:auto;padding:16px 18px calc(112px + var(--safe-b));
   -webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 
 /* ---- Seitenspalten (Verlauf links / Hinweise rechts) ---- */
@@ -110,11 +112,19 @@ body{
 
 /* ---- Desktop: drei Spalten, nur während eines laufenden Workouts ---- */
 @media (min-width:980px){
+  /* grid-template-rows:minmax(0,1fr) ist Pflicht: ohne Angabe entsteht eine implizite
+     auto-Zeile, und die wird nach dem INHALT bemessen — sie wächst über die 100dvh des
+     Containers hinaus. Folge (Bug 08.09.26): bei langen Schritten (viele Log-Zeilen)
+     rutscht die statische Actionbar samt "Weiter" unter den Bildschirmrand, und weil
+     html/body overflow:hidden sind, gibt es keine Scroll-Bar, die sie zurückholt.
+     minmax(0,1fr) deckelt die Zeile auf die Containerhöhe — dann scrollt wieder .scroll.
+     Mobil tritt das nicht auf: dort ist #app Flex mit definierter Höhe, Bar position:fixed. */
   body.run-mode #app{max-width:1340px;display:grid;
-    grid-template-columns:320px minmax(0,1fr) 384px;gap:20px;padding:0 14px;
+    grid-template-columns:320px minmax(0,1fr) 384px;grid-template-rows:minmax(0,1fr);
+    gap:20px;padding:0 14px;
     height:100dvh;align-items:stretch}
-  body.run-mode #main{display:flex;flex-direction:column;min-width:0;height:100%}
-  body.run-mode .rail{display:block;height:100%;overflow-y:auto;padding:24px 2px 30px}
+  body.run-mode #main{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%}
+  body.run-mode .rail{display:block;height:100%;min-height:0;overflow-y:auto;padding:24px 2px 30px}
   body.run-mode .scroll{padding:24px 6px 28px}
   body.run-mode .topbar{position:static}
   body.run-mode .actionbar{position:static;left:auto;right:auto;max-width:none;margin:0;
