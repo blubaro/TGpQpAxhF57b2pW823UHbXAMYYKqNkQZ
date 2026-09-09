@@ -862,18 +862,31 @@ window.addEventListener("focus",()=>{ if(S.screen==="run") keepAwake(); });
    unter Last zuverlässig zu ~2 s, weil Mitzählen und sauber Ausführen um dieselbe
    Aufmerksamkeit konkurrieren.
 
-   WARUM OHNE TON (Entscheidung nach drei Hörtests, 09.09.2026): Klick, Tonstufen und
-   Gleitton wurden alle drei verworfen — "stufen hört man nicht raus, klicken stört,
-   Faden ist zu krass". Ein Taktgeber, den man wegdreht, ist kein Taktgeber. Deshalb
-   läuft der Takt jetzt vollständig visuell: Balken, Phasenwort, Restsekunden und eine
-   Tönung am Bildschirmrand fürs periphere Sehen. Das spart den ganzen Audio-Scheduler
-   (Klick-Raster, Lookahead, Audio-Uhr-Abgleich) — die Anzeige läuft allein auf der
-   Wanduhr und kann gar nicht mehr aus dem Tritt geraten.
+   OPTIK ist der Hauptkanal: Balken (= Position, voll = unten), Phasenwort, Restsekunden
+   und eine Tönung am Bildschirmrand fürs periphere Sehen.
 
-   Einziger verbliebener Ton: ein kurzes Signal bei der Ziel-Wiederholung (cueTarget).
-   Es ersetzt kein Metronom, sondern sagt "Satz voll" — in dem Moment schaut man nicht
-   auf den Bildschirm. Fällt auf Wunsch ebenfalls weg. */
+   TON — dritter Anlauf, und diesmal Chris' eigener Entwurf (09.09.2026). Verworfen wurden
+   davor: Klick ("stört"), Tonstufen ("hört man nicht raus"), Gleitton ("zu krass") — alle
+   drei hatten dasselbe Problem, sie liefen DURCHGEHEND. Der Entwurf hier klingt nur an den
+   UMKEHRPUNKTEN, und die Tonhöhe sagt, WO man ist:
+
+       unten = tiefer Ton · oben = hoher Ton — nur diese zwei.
+
+   Pro Wiederholung sind das 2 bis 4 kurze Töne statt eines Dauertakts:
+       RDL 3-0-1   t=0 HOCH ●●   t=3 TIEF ●●          (Umkehr ohne Halt = Doppelton)
+       RDL 3-2-1   t=0 HOCH ●●   t=3 TIEF ●   t=5 TIEF ●   (Halt unten = zwei einzelne,
+                                                            der Abstand IST die Pause)
+   Der Doppelton heißt also "ankommen und sofort zurück", zwei getrennte Töne heißen
+   "ankommen … halten … los". Darauf kann man sich einsynchronisieren, ohne hinzusehen.
+
+   Der Ton am Ziel (cueTarget) bleibt davon unberührt — er sagt "Satz voll". */
 const METRO_PREP_KEY="coachRunner.metroPrep";
+const METRO_SOUND_KEY="coachRunner.metroSound";
+const METRO_LOOK=0.35;   // s Vorlauf, mit dem ein Ton auf die Audio-Uhr gelegt wird
+const METRO_DBL=0.10;    // s Abstand der beiden Töne eines Doppeltons
+const METRO_LO=392, METRO_HI=784;   // G4 / G5 — eine Oktave, unverwechselbar
+const METRO_TONE_VOL=0.20;
+let METRO_SOUND=true;
 const METRO_LEAD=5;      // s Default-Vorlauf: reicht, um in Position zu gehen
 const METRO_LEAD_MAX=180;
 const METRO_SHORT=3;     // zweite Seite einer perSide-Übung: die Hantel ist schon in der Hand
@@ -881,7 +894,39 @@ let METRO_PREP=null;     // s; null = Vorgabe aus der Spec bzw. Default. Nutzerw
 try{
   const p=parseFloat(localStorage.getItem(METRO_PREP_KEY));
   if(isFinite(p)&&p>=0) METRO_PREP=Math.min(60,p);
+  METRO_SOUND = localStorage.getItem(METRO_SOUND_KEY)!=="0";
 }catch(e){}
+/* Kurzer Ton. Dreieck statt Sinus: setzt sich neben Musik durch, ohne zu stechen.
+   Bewusst knapp (70 ms) — er markiert einen Zeitpunkt, er begleitet nicht. */
+function _blip(freq,at,vol){
+  if(!AC) return null;
+  try{
+    const o=AC.createOscillator(), g=AC.createGain();
+    o.type="triangle"; o.frequency.setValueAtTime(freq,at);
+    const v=Math.min(0.9,(vol||METRO_TONE_VOL)*VOL);
+    g.gain.setValueAtTime(0.0001,at);
+    g.gain.exponentialRampToValueAtTime(v,at+0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001,at+0.07);
+    o.connect(g); g.connect(_bus||AC.destination);
+    o.start(at); o.stop(at+0.11);
+    return o;
+  }catch(e){ return null; }
+}
+/* Ton-Ereignisse EINER Wiederholung aus der Phasenliste.
+   Position am Phasenbeginn: ecc startet oben, con startet unten, pause liegt unten,
+   hold liegt oben. Doppelton, wenn zwei Bewegungsphasen direkt aufeinandertreffen —
+   dann kehrt man ohne Halt um. Die Phasen sind zyklisch: vor der ersten liegt die letzte. */
+const METRO_POS ={ ecc:"hi", pause:"lo", con:"lo", hold:"hi" };
+const METRO_MOVE={ ecc:true, pause:false, con:true, hold:false };
+function metroEvents(phases){
+  const out=[]; let at=0;
+  phases.forEach((p,i)=>{
+    const prev=phases[(i-1+phases.length)%phases.length];
+    out.push({ at, hi: METRO_POS[p.key]==="hi", double: !!(METRO_MOVE[prev.key] && METRO_MOVE[p.key]) });
+    at+=p.sec;
+  });
+  return out;
+}
 
 function metroPrepSec(t,short){
   let v;
@@ -928,6 +973,7 @@ const Metro = {
   startAt:0, reps:0, target:0, prefill:false,
   autoTarget:false, // am Ziel umschalten (nur wenn ein Zyklus == eine Wiederholung ist)
   overtime:false,   // Ziel erreicht: Zähler steht, Balken läuft weiter
+  events:null, ei:0, cyc:0, sched:[],   // Ton-Ereignisse und ihr Abspiel-Zeiger
 
   start(tempo,target,prefill,shortPrep){
     const ph=tempoPhases(tempo); if(!ph) return false;
@@ -939,7 +985,8 @@ const Metro = {
     // ist ein Zyklus eine Seite — dort gibt es weder Ziel noch Umschaltung (target=0).
     this.autoTarget = !!this.target && !!prefill;
     this.reps=0; this.overtime=false;
-    keepAwake();
+    this.events=metroEvents(ph); this.ei=0; this.cyc=0;
+    ensureAudio(); keepAwake();
     this.startAt=performance.now()+metroPrepSec(tempo,shortPrep)*1000;
     this.running=true;
     this.loop();
@@ -948,10 +995,36 @@ const Metro = {
   loop(){
     const step=()=>{
       if(!this.running) return;
-      this.paint((performance.now()-this.startAt)/1000);
+      const now=performance.now();
+      this.pump(now);
+      this.paint((now-this.startAt)/1000);
       if(this.running) this.raf=requestAnimationFrame(step);
     };
     this.raf=requestAnimationFrame(step);
+  },
+  /* Töne kurz im Voraus auf die Audio-Uhr legen und dabei frisch aus der Wanduhr
+     umrechnen. Friert iOS die Audio-Uhr ein, kann höchstens dieses Vorlauf-Fenster
+     danebenliegen; Töne, deren Zeitpunkt beim Aufwachen vorbei ist, werden verworfen
+     statt nachgeholt — ein verspäteter Ton zeigt den falschen Umkehrpunkt an.
+     Der Zeiger läuft auch bei stummem Takt mit, damit er nach dem Einschalten sitzt. */
+  pump(now){
+    if(!this.events || !this.events.length) return;
+    const horizon=now+METRO_LOOK*1000;
+    const live = METRO_SOUND && AC && AC.state==="running";
+    let guard=0;
+    while(guard++<32){
+      const e=this.events[this.ei];
+      const wall=this.startAt+(this.cyc*this.cycle+e.at)*1000;
+      if(wall>horizon) break;
+      if(live && wall>=now-150){
+        const at=AC.currentTime+Math.max(0,(wall-now)/1000);
+        const f=e.hi?METRO_HI:METRO_LO;
+        const o1=_blip(f,at,METRO_TONE_VOL); if(o1) this.sched.push(o1);
+        if(e.double){ const o2=_blip(f,at+METRO_DBL,METRO_TONE_VOL); if(o2) this.sched.push(o2); }
+      }
+      this.ei++; if(this.ei>=this.events.length){ this.ei=0; this.cyc++; }
+    }
+    if(this.sched.length>32) this.sched.splice(0,this.sched.length-32);
   },
   paint(el){
     const bar=$("mtBar"), ph=$("mtPhase"), sec=$("mtSec"), card=$("metroCard"), track=$("mtTrack");
@@ -1016,6 +1089,8 @@ const Metro = {
     const had=this.running, reps=this.reps, over=this.overtime;
     this.running=false;
     cancelAnimationFrame(this.raf); this.raf=null;
+    this.sched.forEach(o=>{ try{o.stop(0);}catch(e){} try{o.disconnect();}catch(e){} });
+    this.sched=[];
     this.tint(null); this._tintCls=undefined;
     if(silent) this.overtime=false;                  // Screen-Wechsel: Satz ist vorbei
     if(!had || silent) return 0;
@@ -1051,8 +1126,12 @@ function metroCard(tempo,target,prefill,shortPrep){
       data-tempo="${esc(JSON.stringify(tempo))}">
     <div class="metro-head">
       <div class="eyebrow" id="mtHead">${esc(head)}</div>
-      <button type="button" class="chip metro-sound" id="mtGear" onclick="metroToggleSettings()"
-        title="Vorlauf einstellen">⚙</button>
+      <span class="chips">
+        <button type="button" class="chip metro-sound" id="mtSound" onclick="metroToggleSound()"
+          title="Umkehr-Töne an/aus">${METRO_SOUND?"🔊":"🔇"}</button>
+        <button type="button" class="chip metro-sound" id="mtGear" onclick="metroToggleSettings()"
+          title="Vorlauf einstellen">⚙</button>
+      </span>
     </div>
     <div class="metro-row">
       <div class="metro-phase" id="mtPhase">BEREIT</div>
@@ -1080,6 +1159,15 @@ function metroSettings(tempo,shortPrep,bare){
   </div>`;
 }
 function metroToggleSettings(){ const el=$("mtSet"); if(el) el.hidden=!el.hidden; }
+/* Nur an/aus — keine Klangauswahl und kein Pegelregler. Es gibt genau einen Klang,
+   und wenn seine Lautstärke nicht passt, ist das eine Konstante, keine Einstellung. */
+function metroToggleSound(){
+  METRO_SOUND=!METRO_SOUND;
+  try{ localStorage.setItem(METRO_SOUND_KEY,METRO_SOUND?"1":"0"); }catch(e){}
+  document.querySelectorAll("#mtSound").forEach(b=>b.textContent=METRO_SOUND?"🔊":"🔇");
+  if(METRO_SOUND) ensureAudio();
+  else { Metro.sched.forEach(o=>{ try{o.stop(0);}catch(e){} }); Metro.sched=[]; }
+}
 function metroSetPrep(v){
   METRO_PREP=Math.min(60,Math.max(0,Number(v)));
   try{ localStorage.setItem(METRO_PREP_KEY,METRO_PREP); }catch(e){}
@@ -1106,8 +1194,9 @@ function metroPaintIdle(phaseWord,btnLabel){
 /* Zahnrad und Vorlauf-Panel verschwinden, sobald der Takt läuft: während des Satzes soll
    die Karte nur noch Balken, Phase und Zähler zeigen. */
 function metroGearVisible(on){
-  const g=$("mtGear"); if(g) g.hidden=!on;
+  const g=$("mtGear"); if(g) g.hidden=!on;      // Vorlauf ist während des Satzes sinnlos
   const s=$("mtSet"); if(s && !on) s.hidden=true;
+  // Der Stumm-Schalter bleibt sichtbar: den will man genau dann, wenn es losgeht.
 }
 function metroToggle(){
   const card=$("metroCard"), btn=$("mtBtn"); if(!card) return;
