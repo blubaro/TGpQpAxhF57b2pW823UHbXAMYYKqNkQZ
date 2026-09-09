@@ -202,6 +202,43 @@ h2{font-size:19px;font-weight:750;letter-spacing:-.01em}
   padding:12px 18px calc(12px + var(--safe-b));max-width:520px;margin:0 auto}
 .actionbar > *{pointer-events:auto}
 
+/* ---- Tempo-Metronom (v7) ----
+   Balken = POSITION in der Bewegung (voll = unten/gedehnt): läuft bei der Exzentrik voll,
+   friert in den Pausen ein, läuft bei der Konzentrik leer. Farbe + Wort sagen die Phase.
+   Der Vignetten-Overlay (#metroTint) tönt NUR die Ränder — dort arbeitet das periphere
+   Sehen, und der Text in der Mitte bleibt unangetastet. Genau das ist der Punkt: unter
+   Last soll man den Takt sehen, OHNE hinzusehen. */
+.metro{border-color:var(--line-strong)}
+.metro-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}
+.metro-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:9px}
+.metro-phase{font-size:26px;font-weight:800;letter-spacing:.06em;line-height:1;color:var(--muted)}
+.metro-sec{font-size:22px;font-weight:700;color:var(--muted)}
+.metro-track{height:20px;border-radius:99px;background:var(--paper);border:1px solid var(--line);
+  overflow:hidden;position:relative}
+.metro-fill{height:100%;width:0;border-radius:99px;background:var(--line-strong)}
+/* Kein CSS-Transition auf der Breite: der Balken wird pro Frame gesetzt, eine Transition
+   würde ihn dem echten Takt hinterherhinken lassen — das Gegenteil des Zwecks. */
+.metro-fill.ecc{background:var(--rest)}
+.metro-fill.con{background:var(--work)}
+.metro-fill.hold{background:var(--muted)}
+.metro-p-ecc .metro-phase,.metro-p-ecc .metro-sec{color:var(--rest)}
+.metro-p-con .metro-phase,.metro-p-con .metro-sec{color:var(--work)}
+.metro-p-hold .metro-phase,.metro-p-hold .metro-sec{color:var(--ink)}
+.metro-track.pulse{animation:metroPulse 1s ease-in-out infinite}
+@keyframes metroPulse{0%,100%{opacity:1}50%{opacity:.55}}
+.metro-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:11px}
+.metro-reps{font-size:14px;font-weight:700;color:var(--muted)}
+.metro-foot .btn{width:auto;flex:none;padding:0 18px}
+.metro-sound{padding:7px 12px;font-size:13px;line-height:1}
+#metroTint{position:fixed;inset:0;pointer-events:none;z-index:20;opacity:0;
+  transition:opacity .16s linear;
+  background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,0) 38%,var(--metro-c,transparent) 100%)}
+#metroTint.on{opacity:.34}
+@media (prefers-reduced-motion:reduce){
+  #metroTint{transition:none}
+  .metro-track.pulse{animation:none}
+}
+
 /* ---- steppers ---- */
 .field{margin:14px 0}
 .field .lab{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
@@ -305,6 +342,7 @@ a{color:var(--accent-ink)}
 </style>
 </head>
 <body>
+<div id="metroTint" aria-hidden="true"></div>
 <div id="app">
   <aside id="railL" class="rail"></aside>
   <main id="main">
@@ -321,7 +359,7 @@ a{color:var(--accent-ink)}
 "use strict";
 /* ============================================================
    the.coach (ehem. Coach Runner)  —  rendert workout-spec, gibt workout-result
-   Single file, vanilla JS, offline-tauglich. schemaVersion 6.
+   Single file, vanilla JS, offline-tauglich. schemaVersion 7.
 
    Änderungen v1 → v2:
    - cardio strukturiert via segments[] (statt flachem durationMin+targetHr)
@@ -347,6 +385,16 @@ a{color:var(--accent-ink)}
      Handstand-Hold zur Wand zu laufen und hochzukippen). Ohne Feld gelten die Defaults (5/6/5s).
    - Mobility: letzte Pose endet mit 3-2-1 + "done"-Klingel statt leisem soft-Ton →
      hörbares Abschluss-Signal am Ende des Cool-Downs/Workouts.
+   Änderungen v6 → v7 (rein additiv, abwärtskompatibel):
+   - optionales tempo je strength / superset.exercises[] → Tempo-Metronom im Satz-Screen:
+     Balken (= Position in der Bewegung, voll = unten/gedehnt) + Phasenwort + leiser Klick,
+     dazu eine Vignette am Bildschirmrand in der Phasenfarbe fürs periphere Sehen.
+     Form: {ecc, pause, con, hold, start:"ecc"|"con"}, Sekunden; fehlende Werte = 0,
+     con fällt auf 1 s zurück. Der Takt zählt die Wiederholungen mit und belegt den
+     Wdh.-Stepper vor (außer bei alternating: dort ist eine Wdh. nicht seitenrein).
+   - Result: log[].metronome:true bei jedem Satz, der wirklich am Takt lief. Damit ist
+     Tempo wieder eine MESSGRÖSSE — ohne diesen Nachweis bleibt eine Tempo-Vorgabe
+     unbelegt, und genau daran sind die 3-s-Exzentrik-Vorgaben bisher gescheitert.
    Nachtrag (additiv, ohne Bump):
    - optionales resultMailto (Top-Level, E-Mail-Adresse) → Summary zeigt "An den Coach
      mailen"-Button: mailto mit dem Result-JSON im Body (Adresse reist in der Spec mit,
@@ -380,7 +428,7 @@ a{color:var(--accent-ink)}
    - Ton-Selbsttest im Ablauf-Screen vor dem Start.
    ============================================================ */
 
-const SCHEMA = 6;
+const SCHEMA = 7;
 const SAVE_KEY = "coachRunner.session.v2";   // v1-Bucket bewusst gewechselt, damit alte localStorage-Sessions keine Crash-Recovery auslösen
 const WD = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
 
@@ -412,8 +460,11 @@ const $ = id => document.getElementById(id);
 const screenEl = $("screen"), barEl = $("actionbar"), toastEl = $("toast"), topEl = $("topbar");
 function h(html){ return html; }
 function setTop(html){ topEl.innerHTML = html || ""; }
-function setScreen(html){ setTop(""); screenEl.innerHTML = html; screenEl.scrollTop = 0; renderRails(); }
-function setRun(html){ setTop(topbar()); screenEl.innerHTML = html; screenEl.scrollTop = 0; renderRails(); }
+// Jeder Screen-Aufbau beendet einen laufenden Takt (silent: kein Wert-Übernehmen).
+// Catch-all statt Einzelfällen — sonst überlebt das Metronom irgendeinen Pfad und klickt
+// weiter, während längst ein anderer Schritt auf dem Schirm steht.
+function setScreen(html){ Metro.stop(true); setTop(""); screenEl.innerHTML = html; screenEl.scrollTop = 0; renderRails(); }
+function setRun(html){ Metro.stop(true); setTop(topbar()); screenEl.innerHTML = html; screenEl.scrollTop = 0; renderRails(); }
 function setBar(html){ barEl.innerHTML = html; }
 let toastT;
 function toast(msg){ toastEl.textContent=msg; toastEl.classList.add("show");
@@ -691,6 +742,9 @@ function cueRest(){ ensureAudio(); tone(880,0,.26,.36); tone(587,.24,.34,.28); v
 function cueDone(){ ensureAudio(); tone(659,0,.16,.36); tone(880,.16,.18,.40); tone(1047,.34,.44,.46); vibrate([80,55,80,55,180]); }
 // Mobility-Ende: tiefe, ruhige Quinte (G4 + D5) — bewusst zart
 function cueSoft(){ ensureAudio(); tone(392,0,.32,.12); tone(587,.16,.30,.10); vibrate(40); }
+// Ziel-Wdh. erreicht, Takt stoppt ("Satz ist voll, ablegen") — zwei klare Töne nach oben
+// (A5→E6). Bewusst NICHT cueDone: das ist das Signal für die ganze Übung.
+function cueTarget(){ ensureAudio(); tone(880,0,.16,.40); tone(1319,.15,.34,.44); vibrate([70,50,140]); }
 // Anläuten zu Beginn eines Übergangs ("gleich geht's los") — kräftiges Ding-Ding (D5→A5)
 function cueAnnounce(){ ensureAudio(); tone(587,0,.18,.34); tone(880,.17,.30,.42); vibrate([50,40,60]); }
 function vibrate(p){ if(navigator.vibrate) try{navigator.vibrate(p);}catch(e){} }
@@ -757,6 +811,323 @@ document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==
 // PWA-Edge-Cases: nach bfcache-Restore und Focus-Wechsel ebenfalls reaktivieren.
 window.addEventListener("pageshow",()=>{ unlockAudio(); if(S.screen==="run") keepAwake(); });
 window.addEventListener("focus",()=>{ if(S.screen==="run") keepAwake(); });
+
+/* ---------- Tempo-Metronom (Schema v7) ----------
+   WARUM: Tempo-Vorgaben ohne Taktgeber kommen nicht an — 3 s Exzentrik werden unter Last
+   zuverlässig zu ~2 s, weil Mitzählen und sauber Ausführen um dieselbe Aufmerksamkeit
+   konkurrieren. Der Takt übernimmt das Zählen, damit Tempo wieder eine Messgröße sein darf.
+
+   ZWEI UHREN, wie beim Timer: die Anzeige läuft auf performance.now(), die Klicks auf
+   AC.currentTime. Statt eines Drift-Abgleichs (Timer.checkDrift) genügt hier ein kurzer
+   Vorlauf: jeder Klick wird erst METRO_LOOK Sekunden vorher auf die Audio-Uhr gelegt und
+   dabei frisch aus der Wanduhr umgerechnet. Friert iOS die Audio-Uhr ein, kann höchstens
+   dieses eine Vorlauf-Fenster danebenliegen — der Takt fängt sich von selbst wieder ein.
+   Klicks, deren Zeitpunkt beim Aufwachen schon vorbei ist, werden verworfen statt nachgeholt. */
+const METRO_KEY="coachRunner.metroSound";
+let METRO_SOUND=true; try{ METRO_SOUND=localStorage.getItem(METRO_KEY)!=="0"; }catch(e){}
+// Bereitmachen vor dem ersten Takt: Bells holen, Stand einrichten, Erhöhung hinstellen.
+// 3 s waren zu knapp — man tippt Start, ist aber noch nicht an der Hantel. Je Übung über
+// tempo.prepSec zu verlängern (gleiche Idee wie prepSec bei circuit/mobility/interval, v6).
+const METRO_LEAD=10;     // s Default-Vorlauf
+const METRO_LEAD_MAX=180;
+const METRO_TICK_IN=3;   // nur die letzten n Sekunden klicken — ein langer Vorlauf soll
+                         // keine Klickmaschine sein; 3-2-1 genügt, um ohne Hinsehen zu starten
+// Lautstärke-Faktor in der Verlängerung (Ziel erreicht, Bells noch oben). Der Takt wird
+// leiser statt stumm: der Lautstärke-Abfall ist die Ansage "Ziel erreicht", der Rhythmus
+// bleibt aber als Führung für die Zusatz-Wiederholungen da. Eine Zahl zum Nachjustieren:
+// verschwindet der Takt unter Last, hochsetzen; drängt er sich auf, runter.
+const METRO_OVER_VOL=0.45;
+const METRO_LOOK=0.35;   // s Vorlauf, mit dem ein Klick auf die Audio-Uhr gelegt wird
+function metroPrepSec(t){
+  // Achtung: Number(null) === 0 und isFinite(null) === true — ohne das t?-Gate würde
+  // ein fehlendes tempo einen Vorlauf von 0 s ergeben, also Start ohne Bereitmachen.
+  const v = t ? Number(t.prepSec) : NaN;
+  return (isFinite(v) && v>=0) ? Math.min(METRO_LEAD_MAX,v) : METRO_LEAD;
+}
+
+/* tempo-Feld → geordnete Phasenliste EINER Wiederholung.
+   Fehlende/0-Werte fallen raus; con fällt auf 1 s zurück (eine Wdh. braucht ein Heben).
+   start:"con" dreht den Zyklus (Klimmzug, Deadlift: es geht konzentrisch los). */
+function tempoPhases(t){
+  if(!t || typeof t!=="object" || Array.isArray(t)) return null;
+  const n=k=>{ const v=Number(t[k]); return (isFinite(v)&&v>0)?Math.min(60,v):0; };
+  const P={
+    ecc  :{key:"ecc",  sec:n("ecc"),      label:"RUNTER", cls:"ecc",  level:p=>p},
+    pause:{key:"pause",sec:n("pause"),    label:"HALTEN", cls:"hold", level:()=>1},
+    con  :{key:"con",  sec:n("con")||1,   label:"HOCH",   cls:"con",  level:p=>1-p},
+    hold :{key:"hold", sec:n("hold"),     label:"HALTEN", cls:"hold", level:()=>0}
+  };
+  const order = (t.start==="con") ? [P.con,P.hold,P.ecc,P.pause] : [P.ecc,P.pause,P.con,P.hold];
+  const out=order.filter(p=>p.sec>0);
+  return out.length?out:null;
+}
+/* Kompaktschreibweise für die Ziel-Zeile: Sekunden in Zyklus-Reihenfolge, "3-2-1".
+   Nullen am Ende fallen weg, dazwischen bleiben sie (sonst verschiebt sich die Lesart). */
+function tempoText(t){
+  if(!t || typeof t!=="object" || Array.isArray(t)) return "";
+  const n=k=>{ const v=Number(t[k]); return (isFinite(v)&&v>0)?v:0; };
+  const seq = (t.start==="con") ? [n("con")||1,n("hold"),n("ecc"),n("pause")]
+                                : [n("ecc"),n("pause"),n("con")||1,n("hold")];
+  while(seq.length && !seq[seq.length-1]) seq.pop();
+  if(!seq.length) return "";
+  return seq.join("-");
+}
+/* Sehr kurzer, leiser Klick — bewusst NICHT _osc(): dessen Rechteck-Kante plus Sub-Oktave
+   ist ein Box-Timer-Signal und als Sekundentakt unerträglich. Hier: reiner Sinus, ~55 ms. */
+function _click(freq,at,vol){
+  if(!AC) return null;
+  try{
+    const o=AC.createOscillator(), g=AC.createGain();
+    o.type="sine"; o.frequency.setValueAtTime(freq,at);
+    const v=Math.min(0.5,(vol||0.05)*VOL);
+    g.gain.setValueAtTime(0.0001,at);
+    g.gain.exponentialRampToValueAtTime(v,at+0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001,at+0.055);
+    o.connect(g); g.connect(_bus||AC.destination);
+    o.start(at); o.stop(at+0.09);
+    return o;
+  }catch(e){ return null; }
+}
+// Klang je Klick-Art: Konzentrik hell & am lautesten (der Moment, der Kraft kostet),
+// Exzentrik tiefer, Pausen dazwischen, Sekunden-Unterteilung nur ein Hauch.
+const METRO_VOICE={ con:[988,.13], ecc:[659,.10], hold:[784,.09], sub:[1319,.035], lead:[587,.11] };
+
+const Metro = {
+  raf:null, running:false, phases:null, cycle:0, ticks:null,
+  startAt:0, reps:0, target:0, prefill:false,
+  autoTarget:false, // am Ziel umschalten (nur wenn ein Zyklus == eine Wiederholung ist)
+  overtime:false,   // Ziel erreicht: Ton aus, Balken läuft weiter, Zähler steht
+  sched:[], li:0, lead:[], cyc:0, ti:0,
+
+  // Klick-Raster EINER Wiederholung: Phasenwechsel + Sekunden-Unterteilung innerhalb der Phase
+  buildTicks(){
+    const out=[]; let at=0;
+    this.phases.forEach(p=>{
+      out.push({at, kind:p.cls==="con"?"con":(p.cls==="ecc"?"ecc":"hold")});
+      for(let k=1;k<p.sec-0.001;k++) out.push({at:at+k, kind:"sub"});
+      at+=p.sec;
+    });
+    this.cycle=at; this.ticks=out;
+  },
+  start(tempo,target,prefill){
+    const ph=tempoPhases(tempo); if(!ph) return false;
+    this.stop(true);
+    this.phases=ph; this.buildTicks();
+    this.target=target||0; this.prefill=!!prefill;
+    // Ziel-Umschaltung nur, wenn ein Zyklus wirklich EINE Wiederholung ist. Bei alternating
+    // ist ein Zyklus eine Seite — dort gibt es weder Ziel noch Umschaltung (target=0).
+    this.autoTarget = !!this.target && !!prefill;
+    this.reps=0; this.overtime=false;
+    this.cyc=0; this.ti=0; this.li=0;
+    ensureAudio(); keepAwake();
+    const now=performance.now();
+    const prep = metroPrepSec(tempo);
+    this.startAt=now+prep*1000;
+    this.lead=[];
+    for(let k=Math.min(METRO_TICK_IN,prep);k>=1;k--) this.lead.push(this.startAt-k*1000);
+    this.running=true;
+    this.loop();
+    return true;
+  },
+  // Klicks im Vorlauf-Fenster auf die Audio-Uhr legen. Vergangene werden übersprungen
+  // (ein verspäteter Klick ist schlimmer als ein fehlender — er zeigt die falsche Phase an).
+  pump(now){
+    const horizon=now+METRO_LOOK*1000;
+    // Der Zeiger läuft IMMER mit, auch bei stummem Takt oder schlafendem AudioContext —
+    // sonst steht er still und müsste nach dem Einschalten erst einen Rückstand abarbeiten.
+    const live = METRO_SOUND && AC && AC.state==="running";
+    // In der Verlängerung (Ziel erreicht) läuft der Takt leiser weiter — der hörbare
+    // Pegelabfall sagt "Ziel", die Führung für Zusatz-Wiederholungen bleibt erhalten.
+    const gain = this.overtime ? METRO_OVER_VOL : 1;
+    const put=(wall,kind)=>{
+      if(!live || wall < now-150) return;
+      const v=METRO_VOICE[kind]||METRO_VOICE.sub;
+      const o=_click(v[0], AC.currentTime+Math.max(0,(wall-now)/1000), v[1]*gain);
+      if(o) this.sched.push(o);
+    };
+    while(this.li<this.lead.length && this.lead[this.li]<=horizon){ put(this.lead[this.li],"lead"); this.li++; }
+    let guard=0;
+    while(guard++<64){
+      const t=this.ticks[this.ti];
+      const wall=this.startAt+(this.cyc*this.cycle+t.at)*1000;
+      if(wall>horizon) break;
+      put(wall,t.kind);
+      this.ti++; if(this.ti>=this.ticks.length){ this.ti=0; this.cyc++; }
+    }
+    // gespielte Oszillatoren nicht endlos sammeln
+    if(this.sched.length>48) this.sched.splice(0,this.sched.length-48);
+  },
+  loop(){
+    const step=()=>{
+      if(!this.running) return;
+      const now=performance.now();
+      this.pump(now);
+      this.paint((now-this.startAt)/1000);
+      // paint() kann über finish() den Takt beendet haben (Auto-Stopp am Ziel). Dann
+      // NICHT neu einhängen — sonst überschreibt das den raf-Handle, den stop() gerade
+      // abgeräumt hat, und es läuft ein Frame zu viel.
+      if(this.running) this.raf=requestAnimationFrame(step);
+    };
+    this.raf=requestAnimationFrame(step);
+  },
+  paint(el){
+    const bar=$("mtBar"), ph=$("mtPhase"), sec=$("mtSec"), card=$("metroCard"), track=$("mtTrack");
+    if(!bar||!ph||!sec||!card) return;
+    if(el<0){                                   // Bereitmachen
+      ph.textContent="BEREIT"; sec.textContent=Math.ceil(-el)+" s";
+      bar.style.width="0%"; bar.className="metro-fill";
+      card.className="card metro"; if(track) track.className="metro-track";
+      this.tint(null); return;
+    }
+    const cyc=Math.floor(el/this.cycle);
+    let within=el-cyc*this.cycle, p=this.phases[0];
+    for(const q of this.phases){ if(within<q.sec){ p=q; break; } within-=q.sec; }
+    const frac=Math.min(1,Math.max(0,within/p.sec));
+    bar.style.width=(p.level(frac)*100).toFixed(1)+"%";
+    bar.className="metro-fill "+p.cls;
+    ph.textContent=p.label;
+    sec.textContent=(p.sec-within).toFixed(1)+" s";
+    card.className="card metro metro-p-"+p.cls;
+    if(track) track.className="metro-track"+(p.cls==="hold"?" pulse":"");
+    this.tint(p.cls);
+    // In der Verlängerung steht der Zähler. Bewusst: ab hier misst er die Zeit bis zum
+    // Antippen mit, nicht die Wiederholungen — eine plausibel aussehende falsche Zahl wäre
+    // schlimmer als gar keine. Die Zusatz-Wdh. trägt der Sportler selbst nach.
+    if(this.overtime) return;
+    if(cyc!==this.reps){
+      this.reps=cyc;
+      if(this.reps>=1 && S.sub) S.sub.metroUsed=true;
+      const r=$("mtReps"); if(r) r.textContent=this.repsLabel();
+      if(this.autoTarget && this.reps>=this.target) this.reachTarget();
+    }
+  },
+  /* Ziel erreicht. Der Takt STOPPT NICHT — wer die Bells oben hat, macht ohne Absetzen
+     weiter, und dafür braucht er den Takt noch. Was passiert:
+       - ein Signalton, danach läuft der Klick LEISER weiter (METRO_OVER_VOL)
+       - Balken und Klick führen weiter durch die Zusatz-Wiederholungen
+       - der Zähler friert ein, und der Wdh.-Stepper bekommt JETZT den exakten Wert
+       - ab hier schreibt der Takt den Stepper nicht mehr an: die Zahl gehört dem Sportler */
+  reachTarget(){
+    this.overtime=true;
+    if(this.prefill){
+      S.sub.reps=this.reps;
+      const v=$("v-reps"); if(v) v.textContent=this.reps;
+    }
+    cueTarget();
+    const r=$("mtReps"); if(r) r.textContent="Ziel "+this.target+" ✓ · Zusatz selbst eintragen";
+    const h=$("mtHead"); if(h) h.textContent="Ziel erreicht · Takt läuft leiser weiter";
+  },
+  repsLabel(){
+    return "Wdh "+this.reps+(this.target?(" / "+this.target):"");
+  },
+  // Nur bei echtem Phasenwechsel anfassen: die Vignette ist bildschirmfüllend, und ein
+  // Schreiben pro Frame würde den Gradienten 60×/s neu zeichnen lassen — für ein Bild,
+  // das sich nur alle paar Sekunden ändert.
+  _tintCls:undefined,
+  tint(cls){
+    if(cls===this._tintCls) return;
+    const el=$("metroTint"); if(!el){ this._tintCls=cls; return; }
+    this._tintCls=cls;
+    if(!cls){ el.classList.remove("on"); return; }
+    const c = cls==="ecc" ? "var(--rest)" : cls==="con" ? "var(--work)" : "var(--muted)";
+    el.style.setProperty("--metro-c",c);
+    el.classList.add("on");
+  },
+  // silent:true → nur aufräumen (Screen-Wechsel). silent:false → Nutzer-Stopp: gezählte
+  // Wiederholungen in den Stepper übernehmen, damit der Takt gleich das Zählen miterledigt.
+  stop(silent){
+    const had=this.running, reps=this.reps;
+    this.running=false;
+    cancelAnimationFrame(this.raf); this.raf=null;
+    this.sched.forEach(o=>{ try{o.stop(0);}catch(e){} try{o.disconnect();}catch(e){} });
+    this.sched=[];
+    this.tint(null);
+    this._tintCls=undefined;   // nächster Start färbt garantiert neu ein
+    const over=this.overtime;
+    if(silent) this.overtime=false;                  // Screen-Wechsel: Satz ist vorbei
+    if(!had || silent) return 0;
+    // Nach dem Ziel steht der exakte Wert längst im Stepper — und der Sportler hat ihn
+    // womöglich schon von Hand um seine Zusatz-Wdh. korrigiert. Nicht überschreiben.
+    if(over) return -1;
+    if(this.prefill && reps>0){
+      S.sub.reps=reps;
+      const v=$("v-reps"); if(v) v.textContent=reps;
+    }
+    return reps;
+  },
+  // Satz-Button gedrückt, während der Takt läuft: Zählstand übernehmen statt verwerfen.
+  harvest(){ if(this.running) this.stop(false); }
+};
+/* Takt-Karte. Erscheint NUR, wenn die Spec ein tempo-Feld liefert — der Coach entscheidet,
+   wann Tempo eine Vorgabe ist; einen Von-Hand-Modus gibt es bewusst nicht. */
+function metroCard(tempo,target,prefill){
+  const ph=tempoPhases(tempo); if(!ph) return "";
+  // Ohne Vorbelegung (alternating) ist ein Zyklus eine Seite, keine Wiederholung — dann
+  // wäre ein Ziel-Vergleich falsch. Also kein Ziel anzeigen und kein Auto-Stopp.
+  if(!prefill) target=0;
+  const spec=tempoText(tempo);
+  const legend=ph.map(p=>p.label.toLowerCase()+" "+p.sec+" s").join(" · ");
+  const head=`Takt ${spec} · ${metroPrepSec(tempo)} s Vorlauf`;
+  return `<div class="card metro" id="metroCard"
+      data-target="${target||0}" data-prefill="${prefill?1:0}"
+      data-head="${esc(head)}"
+      data-tempo="${esc(JSON.stringify(tempo))}">
+    <div class="metro-head">
+      <div class="eyebrow" id="mtHead">${esc(head)}</div>
+      <button type="button" class="chip metro-sound" id="mtSound" onclick="metroToggleSound()"
+        title="Klick an/aus">${METRO_SOUND?"🔊 Klick":"🔇 stumm"}</button>
+    </div>
+    <div class="metro-row">
+      <div class="metro-phase" id="mtPhase">BEREIT</div>
+      <div class="metro-sec tnum" id="mtSec">${esc(spec)}</div>
+    </div>
+    <div class="metro-track" id="mtTrack"><div class="metro-fill" id="mtBar"></div></div>
+    <div class="metro-foot">
+      <span class="metro-reps tnum" id="mtReps">${esc(legend)}</span>
+      <button type="button" class="btn sec sm" id="mtBtn" onclick="metroToggle()">▶ Takt</button>
+    </div>
+  </div>`;
+}
+// Karte in den Ruhezustand zurückversetzen (nach manuellem Stopp und nach Auto-Stopp).
+function metroPaintIdle(phaseWord,btnLabel){
+  const card=$("metroCard"); if(!card) return;
+  const ph=$("mtPhase"), sec=$("mtSec"), bar=$("mtBar"), track=$("mtTrack"), btn=$("mtBtn");
+  const h=$("mtHead"); if(h) h.textContent=card.dataset.head||"";
+  if(ph) ph.textContent=phaseWord;
+  if(sec) sec.textContent=esc(tempoText(metroTempoOf(card)));
+  if(bar){ bar.style.width="0%"; bar.className="metro-fill"; }
+  if(track) track.className="metro-track";
+  if(btn) btn.textContent=btnLabel;
+  card.className="card metro";
+}
+function metroToggle(){
+  const card=$("metroCard"), btn=$("mtBtn"); if(!card) return;
+  if(Metro.running){
+    const reps=Metro.stop(false);
+    Metro.overtime=false;
+    metroPaintIdle("BEREIT","▶ Takt");
+    const r=$("mtReps"); if(r) r.textContent=Metro.repsLabel();
+    // Der Unterschied ist wichtig genug für zwei verschiedene Meldungen: am Ziel ist die
+    // Zahl gemessen, bei einem Stopp von Hand enthält sie die Zeit bis zum Antippen.
+    if(reps===-1) toast("Ziel-Wert steht — Zusatz-Wdh. selbst eintragen");
+    else if(reps>0 && card.dataset.prefill==="1") toast(reps+" Wdh gezählt — kurz prüfen");
+    return;
+  }
+  const ok=Metro.start(metroTempoOf(card), Number(card.dataset.target)||0,
+                       card.dataset.prefill==="1");
+  if(ok){
+    if(btn) btn.textContent="⏹ Stopp";
+    const r=$("mtReps"); if(r) r.textContent=Metro.repsLabel();
+  }
+}
+function metroTempoOf(card){ try{ return JSON.parse(card.dataset.tempo); }catch(e){ return null; } }
+function metroToggleSound(){
+  METRO_SOUND=!METRO_SOUND;
+  try{ localStorage.setItem(METRO_KEY,METRO_SOUND?"1":"0"); }catch(e){}
+  const b=$("mtSound"); if(b) b.textContent=METRO_SOUND?"🔊 Klick":"🔇 stumm";
+  if(!METRO_SOUND){ Metro.sched.forEach(o=>{ try{o.stop(0);}catch(e){} }); Metro.sched=[]; }
+  else ensureAudio();
+}
 
 /* ---------- timer engine ----------
    ZWEI UHREN: die Anzeige läuft auf performance.now() (Wanduhr), die Töne auf
@@ -850,6 +1221,23 @@ function extractJSON(raw){
   if(a>=0 && b>a){ try{ return JSON.parse(t.slice(a,b+1)); }catch(e){} }
   return null;
 }
+// tempo (v7) prüfen: falsche Form fällt sonst still hinten runter und der Takt fehlt
+// genau in der Einheit, für die er vorgegeben war.
+function tempoErrs(t,where,errs){
+  if(t==null) return;
+  if(typeof t!=="object" || Array.isArray(t)){ errs.push(`${where}: "tempo" muss ein Objekt sein ({ecc,pause,con,hold,start}).`); return; }
+  ["ecc","pause","con","hold"].forEach(k=>{
+    if(t[k]!=null && (!isFinite(Number(t[k])) || Number(t[k])<0)) errs.push(`${where}: tempo.${k} muss eine Sekundenzahl ≥ 0 sein.`);
+  });
+  if(t.start!=null && t.start!=="ecc" && t.start!=="con") errs.push(`${where}: tempo.start muss "ecc" oder "con" sein.`);
+  if(t.prepSec!=null && (!isFinite(Number(t.prepSec)) || Number(t.prepSec)<0 || Number(t.prepSec)>METRO_LEAD_MAX))
+    errs.push(`${where}: tempo.prepSec muss zwischen 0 und ${METRO_LEAD_MAX} Sekunden liegen.`);
+  // tempoPhases lässt con auf 1 s zurückfallen (damit {ecc:5} als Negativ-Vorgabe genügt).
+  // Ein tempo, in dem NICHTS gesetzt ist, würde davon zu einem 1-s-Takt ohne Aussage —
+  // das ist fast sicher ein Tippfehler und wird hier abgefangen, nicht stillschweigend gerendert.
+  if(!["ecc","pause","con","hold"].some(k=>Number(t[k])>0))
+    errs.push(`${where}: "tempo" enthält keine Sekundenangabe (mindestens ecc oder con > 0).`);
+}
 function validateSpec(o){
   const errs=[];
   if(!o||typeof o!=="object") return ["Kein gültiges JSON gefunden."];
@@ -865,10 +1253,13 @@ function validateSpec(o){
         if(!s.name) errs.push(`${id}: "name" fehlt.`);
         if(!s.sets) errs.push(`${id}: "sets" fehlt.`);
         if(s.repTarget==null) errs.push(`${id}: "repTarget" fehlt.`);
+        if(s.type==="strength") tempoErrs(s.tempo,id,errs);
+        else if(s.tempo!=null) errs.push(`${id}: "tempo" gibt es nur bei strength/superset — Plyo lebt von Explosivität, nicht von Zeitvorgaben.`);
         break;
       case "superset":
         if(!s.rounds) errs.push(`${id}: "rounds" fehlt.`);
         if(!Array.isArray(s.exercises) || !s.exercises.length) errs.push(`${id}: "exercises" leer.`);
+        (s.exercises||[]).forEach((ex,j)=>tempoErrs(ex.tempo,`${id} · Übung ${j+1}`,errs));
         break;
       case "interval":
         if(!s.scheme) errs.push(`${id}: "scheme" fehlt (emom/intervals/tabata).`);
@@ -1329,7 +1720,7 @@ function toggleCheck(i){ S.sub.checked[i]=!S.sub.checked[i]; renderStep(); }
 function doneSetRow(l,i,perN,withRir,alt){
   const n=Math.floor(i/perN)+1;
   return `<div class="set-row" onclick="editSet(${i})" role="button" title="Antippen zum Korrigieren"><div class="n ok">${n}</div>
-     <span>${l.reps} Wdh${alt?"/Seite":""}${sideLabel(l.side)}${l.load?(" · "+l.load+" kg"):""}</span>${withRir&&l.rir!=null?`<b class="muted" style="margin-left:auto">RIR ${l.rir}</b>`:""}</div>`;
+     <span>${l.reps} Wdh${alt?"/Seite":""}${sideLabel(l.side)}${l.load?(" · "+l.load+" kg"):""}${l.metronome?" · ⏱":""}</span>${withRir&&l.rir!=null?`<b class="muted" style="margin-left:auto">RIR ${l.rir}</b>`:""}</div>`;
 }
 function renderStrength(s){
   const rs=S.result.steps[S.stepIdx];
@@ -1347,6 +1738,10 @@ function renderStrength(s){
   const defRir  = prev?prev.rir  : (s.rirTarget!=null?s.rirTarget:2);
   if(S.sub.reps==null){ S.sub.reps=defReps; S.sub.load=defLoad; S.sub.rir=defRir; }
   const done=rs.log.map((l,i)=>doneSetRow(l,i,perN,true,alt)).join("");
+  // Takt-Karte nur im normalen Satz-Ablauf, nicht im Korrektur-Modus (dort wird nichts ausgeführt).
+  // Wdh.-Vorbelegung nur, wenn eine Wiederholung eindeutig EINE gezählte Bewegung ist:
+  // bei alternating wechselt die Seite innerhalb des Satzes, ein Zyklus ist dann eine Seite.
+  const metro = editing ? "" : metroCard(s.tempo, Array.isArray(s.repTarget)?s.repTarget[1]:s.repTarget, !alt);
   const eyebrow = editing
     ? `Korrektur · Satz ${Math.floor(S.sub.editIdx/perN)+1}${sideLabel(rs.log[S.sub.editIdx].side)}`
     : `Satz ${setNo+1} von ${s.sets}${per?sideLabel(sideIdx?"R":"L"):(alt?" · im Wechsel":(s.load&&s.load.perHand?" · je Seite":""))}`;
@@ -1354,7 +1749,8 @@ function renderStrength(s){
     <div class="eyebrow">${eyebrow}</div>
     <h2 class="run-title" style="margin:4px 0 4px">${esc(s.name)}</h2>
     <p class="muted" style="margin-bottom:12px">
-      Ziel ${esc(repText(s.repTarget))} Wdh${alt?" / Seite (im Wechsel)":""}${s.load?(" · "+esc(s.load.text||(s.load.kg+" kg"))):""} · RIR ${esc(s.rirTarget)}</p>
+      Ziel ${esc(repText(s.repTarget))} Wdh${alt?" / Seite (im Wechsel)":""}${s.load?(" · "+esc(s.load.text||(s.load.kg+" kg"))):""} · RIR ${esc(s.rirTarget)}${tempoText(s.tempo)?(" · Takt "+esc(tempoText(s.tempo))):""}</p>
+    ${metro}
     <div class="card">
       ${stepperField("Wiederholungen","reps",1,"Wdh")}
       ${isBW?"":loadField(s)}
@@ -1447,10 +1843,13 @@ function bump(key,delta,min,max){
 function setVal(key,v){ S.sub[key]=v; const el=$("v-"+key); if(el)el.textContent=v;
   document.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",Number(c.textContent)===v)); }
 function logSet(){
+  Metro.harvest();   // läuft der Takt noch, zählt sein Stand — nicht die Vorbelegung
   const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
   const per=!s.alternating && !!s.perSide;
   const entry={reps:S.sub.reps,rir:S.sub.rir};
   if(S.sub.load) entry.load=S.sub.load;
+  // Nachweis, dass dieser Satz wirklich am Takt lief — nur dann ist die Tempo-Vorgabe belegt.
+  if(S.sub.metroUsed) entry.metronome=true;
   // Korrektur-Modus: in-place zurückschreiben (side bleibt erhalten), kein neuer Eintrag
   if(S.sub.editIdx!=null){
     rs.log[S.sub.editIdx]=Object.assign({},rs.log[S.sub.editIdx],entry);
@@ -1460,6 +1859,7 @@ function logSet(){
   }
   if(per) entry.side=(rs.log.length%2===0)?"L":"R";
   rs.log.push(entry);
+  S.sub.metroUsed=false;   // je Satz (bei perSide: je Seite) neu nachzuweisen
   // perSide: nach links direkt rechts (Werte bleiben als Vorbelegung stehen), keine Pause
   if(per && rs.log.length%2===1){ renderStep(); return; }
   S.sub.reps=null;
@@ -1634,10 +2034,12 @@ function renderSuperset(s){
   if(S.sub.reps==null){ S.sub.reps=defReps; S.sub.load=defLoad; S.sub.rir=defRir; }
   const bw = ex.load && /bw|körper|body/i.test(ex.load.text||"");
   const firstSlot = round===0&&sI===0;
+  const metro = metroCard(ex.tempo, Array.isArray(ex.repTarget)?ex.repTarget[1]:ex.repTarget, !ex.alternating);
   setRun(`
     <div class="eyebrow">Runde ${round+1}/${s.rounds} · Übung ${slot.xi+1}/${exN}${slot.side?sideLabel(slot.side):(ex.alternating?" · im Wechsel":"")}</div>
     <h2 class="run-title" style="margin:4px 0 4px">${esc(ex.name)}</h2>
-    <p class="muted" style="margin-bottom:12px">Ziel ${esc(repText(ex.repTarget))} Wdh${ex.alternating?" / Seite (im Wechsel)":""}${ex.load?(" · "+esc(ex.load.text||(ex.load.kg+" kg"))):""}${ex.rirTarget!=null?(" · RIR "+ex.rirTarget):""}</p>
+    <p class="muted" style="margin-bottom:12px">Ziel ${esc(repText(ex.repTarget))} Wdh${ex.alternating?" / Seite (im Wechsel)":""}${ex.load?(" · "+esc(ex.load.text||(ex.load.kg+" kg"))):""}${ex.rirTarget!=null?(" · RIR "+ex.rirTarget):""}${tempoText(ex.tempo)?(" · Takt "+esc(tempoText(ex.tempo))):""}</p>
+    ${metro}
     <div class="card">
       ${stepperField("Wiederholungen","reps",1,"Wdh")}
       ${bw?"":loadField2(ex)}
@@ -1659,13 +2061,16 @@ function loadField2(ex){
       <button onclick="bump('load',2)">+</button></div>${chips}</div>`;
 }
 function logSuperset(restAfter){
+  Metro.harvest();
   const s=S.spec.steps[S.stepIdx], rs=S.result.steps[S.stepIdx];
   const slots=ssSlots(s);
   const slot=slots[rs.log.length%slots.length];
   const entry={reps:S.sub.reps,rir:S.sub.rir};
   if(S.sub.load) entry.load=S.sub.load;
   if(slot&&slot.side) entry.side=slot.side;
+  if(S.sub.metroUsed) entry.metronome=true;
   rs.log.push(entry);
+  S.sub.metroUsed=false;
   const total=s.rounds*slots.length;
   if(rs.log.length>=total){ rs.status="done"; cueDone(); renderStep(); return; }
   // nach links direkt rechts (Werte bleiben als Vorbelegung), keine Pause dazwischen
