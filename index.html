@@ -885,8 +885,15 @@ const METRO_SOUND_KEY="coachRunner.metroSound";
 const METRO_LOOK=0.35;   // s Vorlauf, mit dem ein Ton auf die Audio-Uhr gelegt wird
 const METRO_DBL=0.10;    // s Abstand der beiden Töne eines Doppeltons
 const METRO_LO=392, METRO_HI=784;   // G4 / G5 — eine Oktave, unverwechselbar
-const METRO_TONE_VOL=0.20;
+const METRO_TONE_VOL=0.20;   // Grundpegel — der im Test bestätigte Default (= Faktor 1,0)
+const METRO_GAIN_KEY="coachRunner.metroGain";
 let METRO_SOUND=true;
+/* Faktor auf den Grundpegel. Obergrenze 1,8 und nicht mehr: 0,20 × 1,8 × VOL(2,4) = 0,86
+   und liegt damit knapp unter dem Clamp von 0,9 in _blip. Höhere Regler-Werte würden
+   abgeschnitten — eine Skala, deren oberes Drittel nichts tut, ist schlechter als eine
+   kurze. Wer mehr braucht, dreht das Gerät lauter. */
+const METRO_GAIN_MAX=1.8;
+let METRO_GAIN=1;
 const METRO_LEAD=5;      // s Default-Vorlauf: reicht, um in Position zu gehen
 const METRO_LEAD_MAX=180;
 const METRO_SHORT=3;     // zweite Seite einer perSide-Übung: die Hantel ist schon in der Hand
@@ -895,6 +902,8 @@ try{
   const p=parseFloat(localStorage.getItem(METRO_PREP_KEY));
   if(isFinite(p)&&p>=0) METRO_PREP=Math.min(60,p);
   METRO_SOUND = localStorage.getItem(METRO_SOUND_KEY)!=="0";
+  const g=parseFloat(localStorage.getItem(METRO_GAIN_KEY));
+  if(isFinite(g)&&g>0) METRO_GAIN=Math.min(METRO_GAIN_MAX,Math.max(.2,g));
 }catch(e){}
 /* Kurzer Ton. Dreieck statt Sinus: setzt sich neben Musik durch, ohne zu stechen.
    Bewusst knapp (70 ms) — er markiert einen Zeitpunkt, er begleitet nicht. */
@@ -903,7 +912,7 @@ function _blip(freq,at,vol){
   try{
     const o=AC.createOscillator(), g=AC.createGain();
     o.type="triangle"; o.frequency.setValueAtTime(freq,at);
-    const v=Math.min(0.9,(vol||METRO_TONE_VOL)*VOL);
+    const v=Math.min(0.9,(vol||METRO_TONE_VOL)*METRO_GAIN*VOL);
     g.gain.setValueAtTime(0.0001,at);
     g.gain.exponentialRampToValueAtTime(v,at+0.006);
     g.gain.exponentialRampToValueAtTime(0.0001,at+0.07);
@@ -1145,8 +1154,9 @@ function metroCard(tempo,target,prefill,shortPrep){
     ${metroSettings(tempo,shortPrep)}
   </div>`;
 }
-/* Einstellungen = nur noch der Vorlauf. Klang und Lautstärke sind mit dem Ton entfallen;
-   was bleibt, ist die eine Zahl, die sich am Gerät entscheidet. */
+/* Einstellungen: Vorlauf und Lautstärke. Eine Klangauswahl gibt es bewusst nicht — es gibt
+   genau einen Klang, und der ist entschieden. Nur wie laut er sein soll, hängt an Raum,
+   Musik und Tagesform und gehört deshalb an den Regler. */
 function metroSettings(tempo,shortPrep,bare){
   const cur=metroPrepSec(tempo,shortPrep);
   return `<div class="${bare?"metro-set bare":"metro-set"}" ${bare?"":`id="mtSet" hidden`}>
@@ -1155,8 +1165,45 @@ function metroSettings(tempo,shortPrep,bare){
       <input type="range" min="0" max="30" step="1" value="${cur}"
              oninput="metroSetPrep(this.value)" aria-label="Vorlauf in Sekunden">
     </div>
-    <p class="muted" style="font-size:12px;margin:0">Zweite Seite automatisch ${METRO_SHORT} s.</p>
+    <div class="mset-row">
+      <span class="mset-lab">Lautstärke <b class="mtVolV">${Math.round(METRO_GAIN*100)} %</b></span>
+      <input type="range" min="20" max="${Math.round(METRO_GAIN_MAX*100)}" step="10"
+             value="${Math.round(METRO_GAIN*100)}"
+             oninput="metroSetGain(this.value)" aria-label="Lautstärke der Umkehr-Töne">
+    </div>
+    <div class="mset-row">
+      <span class="mset-lab">Zweite Seite automatisch ${METRO_SHORT} s</span>
+      <button type="button" class="chip" onclick="metroPreview()">▶ Hörprobe</button>
+    </div>
   </div>`;
+}
+function metroSetGain(v){
+  METRO_GAIN=Math.min(METRO_GAIN_MAX,Math.max(.2,Number(v)/100));
+  try{ localStorage.setItem(METRO_GAIN_KEY,METRO_GAIN); }catch(e){}
+  document.querySelectorAll(".mtVolV").forEach(el=>el.textContent=Math.round(METRO_GAIN*100)+" %");
+}
+/* Hörprobe: die Umkehr-Töne EINER Wiederholung, ohne den Satz anzufassen — zum Einpegeln
+   gegen die Musik, bevor man mit der Hantel dasteht. Nutzt dasselbe Ereignis-Raster wie
+   der laufende Takt, klingt also exakt wie später im Satz. */
+function metroPreview(){
+  ensureAudio();
+  if(!AC || !METRO_SOUND) return;
+  const card=$("metroCard");
+  const ph=tempoPhases(card?metroTempoOf(card):null) || tempoPhases({ecc:3,pause:2,con:1});
+  const cyc=ph.reduce((a,p)=>a+p.sec,0);
+  const t0=AC.currentTime+0.12;
+  metroEvents(ph).forEach(e=>{
+    const f=e.hi?METRO_HI:METRO_LO;
+    _blip(f,t0+e.at,METRO_TONE_VOL);
+    if(e.double) _blip(f,t0+e.at+METRO_DBL,METRO_TONE_VOL);
+  });
+  // Abschluss der Wiederholung hörbar machen: der erste Ton des nächsten Zyklus
+  const first=metroEvents(ph)[0];
+  if(first){
+    const f=first.hi?METRO_HI:METRO_LO;
+    _blip(f,t0+cyc,METRO_TONE_VOL);
+    if(first.double) _blip(f,t0+cyc+METRO_DBL,METRO_TONE_VOL);
+  }
 }
 function metroToggleSettings(){ const el=$("mtSet"); if(el) el.hidden=!el.hidden; }
 /* Nur an/aus — keine Klangauswahl und kein Pegelregler. Es gibt genau einen Klang,
