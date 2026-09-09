@@ -233,6 +233,7 @@ h2{font-size:19px;font-weight:750;letter-spacing:-.01em}
 /* Einstellungen in der Takt-Karte: Klang, Lautstärke, Vorlauf — alles, was sich erst
    am Gerät und unter Last entscheidet. Eingeklappt, damit die Karte im Satz ruhig bleibt. */
 .metro-set{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}
+.metro-set.bare{border-top:none;margin-top:0;padding-top:0}
 .mset-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}
 .mset-row:last-child{margin-bottom:0}
 .mset-lab{font-size:12.5px;font-weight:700;color:var(--muted);white-space:nowrap}
@@ -698,6 +699,38 @@ function audioCard(){
       : "Standard: Töne laufen parallel zu Spotify & Co., Musik bleibt an. Sie folgen dem Klingel-/Stummschalter — für Ton also nicht auf lautlos stellen."}</p>
   </div>`;
 }
+/* Takt-Einstellungen VOR dem Workout — offen, nicht hinter einem Zahnrad.
+   Lautstärke und Vorlauf entscheiden sich mit laufender Musik und Hantel in Reichweite,
+   also bevor der erste Satz läuft. Im Satz sitzt dasselbe Panel noch einmal hinter dem ⚙,
+   für den Fall, dass es unter Last doch nicht passt. Erscheint nur, wenn die Session
+   überhaupt einen Takt enthält. */
+function firstTempo(spec){
+  const st=(spec&&spec.steps)||[];
+  for(const s of st){
+    if(s.type==="strength" && tempoPhases(s.tempo)) return s.tempo;
+    if(s.type==="superset"){
+      for(const ex of (s.exercises||[])) if(tempoPhases(ex.tempo)) return ex.tempo;
+    }
+  }
+  return null;
+}
+function taktCard(){
+  const t=firstTempo(S.spec);
+  if(!t) return "";
+  // Übungen zählen, nicht Schritte: ein Superset kann zwei getaktete Übungen enthalten.
+  let n=0;
+  (S.spec.steps||[]).forEach(st=>{
+    if(st.type==="strength" && tempoPhases(st.tempo)) n++;
+    else if(st.type==="superset") (st.exercises||[]).forEach(e=>{ if(tempoPhases(e.tempo)) n++; });
+  });
+  return `<div class="card" id="taktCard">
+    <div class="eyebrow" style="margin-bottom:8px">Takt · ${n} ${n===1?"Übung":"Übungen"} mit Tempo-Vorgabe</div>
+    ${metroSettings(t,false,true)}
+    <p class="muted" style="font-size:12.5px;margin:10px 0 0">
+      Gilt für alle Sätze. Im Satz jederzeit über ⚙ änderbar. Der Vorlauf beginnt beim
+      Antippen von „▶ Takt" — er muss nur reichen, um in Position zu gehen.</p>
+  </div>`;
+}
 function toggleSilentBypass(){
   SILENT_BYPASS=!SILENT_BYPASS;
   try{ localStorage.setItem(BYPASS_KEY,SILENT_BYPASS?"1":"0"); }catch(e){}
@@ -837,12 +870,12 @@ const METRO_MODE_KEY="coachRunner.metroMode";
 const METRO_GAIN_KEY="coachRunner.metroGain";
 const METRO_PREP_KEY="coachRunner.metroPrep";
 let METRO_SOUND=true;
-// Klang: "faden" = ein durchgehender Ton, dessen TONHÖHE die Bewegung abbildet (fällt beim
-// Senken, steigt beim Heben) — man hört die Position, nicht nur den Sekundentakt.
-// "stufen" = dieselbe Tonhöhen-Kurve, aber in Sekundenschritten. "klick" = klassisches
-// Metronom (Ausgangsvariante). Default faden: gegen laufende Musik trägt ein stehender
-// Ton weiter als ein Transient.
-let METRO_MODE="faden";
+// Klang. "stufen" (Default) = ein Ton je Sekunde, dessen TONHÖHE die Bewegung abbildet:
+// fallend beim Senken, steigend beim Heben — man hört die Position, nicht nur den Takt,
+// aber es bleibt ein Puls und kein Dauerton. "faden" = dieselbe Kurve als durchgehender
+// Gleitton (im Test als nervig empfunden, bleibt als Option). "klick" = klassisches
+// Metronom ohne Tonhöhen-Information.
+let METRO_MODE="stufen";
 let METRO_GAIN=1.6;    // Faktor auf die Grundlautstärke (Slider 0,4–3,0)
 let METRO_PREP=null;   // s; null = Vorgabe aus der Spec bzw. Default. Nutzerwahl schlägt Spec.
 try{
@@ -1175,7 +1208,10 @@ function metroCard(tempo,target,prefill,shortPrep){
   // wäre ein Ziel-Vergleich falsch. Also kein Ziel anzeigen und kein Auto-Stopp.
   if(!prefill) target=0;
   const spec=tempoText(tempo);
-  const legend=ph.map(p=>p.label.toLowerCase()+" "+p.sec+" s").join(" · ");
+  // Erste Phase zuerst nennen und explizit als Start markieren: ob eine Wiederholung mit
+  // Heben oder Senken beginnt, hängt an der Übung (Press/Klimmzug/Row starten oben-los,
+  // also konzentrisch) und muss VOR dem Start erkennbar sein — nicht erst am Phasenwort.
+  const legend="ab "+ph[0].label+" · "+ph.map(p=>p.label.toLowerCase()+" "+p.sec+" s").join(" · ");
   const head=`Takt ${spec} · ${metroPrepSec(tempo,shortPrep)} s Vorlauf`;
   return `<div class="card metro" id="metroCard"
       data-target="${target||0}" data-prefill="${prefill?1:0}" data-short="${shortPrep?1:0}"
@@ -1205,22 +1241,23 @@ function metroCard(tempo,target,prefill,shortPrep){
 /* Einstell-Panel. Bewusst IN der Takt-Karte und nicht im Ablauf-Screen: Lautstärke und
    Vorlauf entscheiden sich erst neben der Hantel, mit laufender Musik. Alle Werte liegen
    in localStorage und gelten ab dann für jeden Takt — die Spec liefert nur den Startwert. */
-function metroSettings(tempo,shortPrep){
+function metroSettings(tempo,shortPrep,bare){
   const cur=metroPrepSec(tempo,shortPrep);
-  const mode=(m,l)=>`<button type="button" class="chip ${METRO_MODE===m?"on":""}"
-     onclick="metroSetMode('${m}')">${l}</button>`;
-  return `<div class="metro-set" id="mtSet" hidden>
+  const mode=(m,l)=>`<button type="button" class="chip mtMode ${METRO_MODE===m?"on":""}"
+     data-mode="${m}" onclick="metroSetMode('${m}')">${l}</button>`;
+  // bare: im Ablauf-Screen offen und ohne obere Trennlinie; im Satz eingeklappt hinter ⚙
+  return `<div class="${bare?"metro-set bare":"metro-set"}" ${bare?"":`id="mtSet" hidden`}>
     <div class="mset-row">
       <span class="mset-lab">Klang</span>
       <span class="chips">${mode("faden","Faden")}${mode("stufen","Stufen")}${mode("klick","Klick")}</span>
     </div>
     <div class="mset-row">
-      <span class="mset-lab">Lautstärke <b id="mtGainV">${Math.round(METRO_GAIN*100)} %</b></span>
+      <span class="mset-lab">Lautstärke <b class="mtGainV">${Math.round(METRO_GAIN*100)} %</b></span>
       <input type="range" min="40" max="300" step="10" value="${Math.round(METRO_GAIN*100)}"
              oninput="metroSetGain(this.value)" aria-label="Lautstärke des Takts">
     </div>
     <div class="mset-row">
-      <span class="mset-lab">Vorlauf <b id="mtPrepV">${cur} s</b></span>
+      <span class="mset-lab">Vorlauf <b class="mtPrepV">${cur} s</b></span>
       <input type="range" min="0" max="30" step="1" value="${cur}"
              oninput="metroSetPrep(this.value)" aria-label="Vorlauf in Sekunden">
     </div>
@@ -1233,21 +1270,18 @@ function metroSettings(tempo,shortPrep){
 function metroToggleSettings(){ const el=$("mtSet"); if(el) el.hidden=!el.hidden; }
 function metroSetMode(m){
   METRO_MODE=m; try{ localStorage.setItem(METRO_MODE_KEY,m); }catch(e){}
-  document.querySelectorAll("#mtSet .chip").forEach(c=>{
-    const t=(c.textContent||"").trim().toLowerCase();
-    if(t==="faden"||t==="stufen"||t==="klick") c.classList.toggle("on",t===m);
-  });
+  document.querySelectorAll(".mtMode").forEach(c=>c.classList.toggle("on",c.dataset.mode===m));
   metroPreview();
 }
 function metroSetGain(v){
   METRO_GAIN=Math.min(3,Math.max(.4,Number(v)/100));
   try{ localStorage.setItem(METRO_GAIN_KEY,METRO_GAIN); }catch(e){}
-  const el=$("mtGainV"); if(el) el.textContent=Math.round(METRO_GAIN*100)+" %";
+  document.querySelectorAll(".mtGainV").forEach(el=>el.textContent=Math.round(METRO_GAIN*100)+" %");
 }
 function metroSetPrep(v){
   METRO_PREP=Math.min(60,Math.max(0,Number(v)));
   try{ localStorage.setItem(METRO_PREP_KEY,METRO_PREP); }catch(e){}
-  const el=$("mtPrepV"); if(el) el.textContent=METRO_PREP+" s";
+  document.querySelectorAll(".mtPrepV").forEach(el=>el.textContent=METRO_PREP+" s");
   const h=$("mtHead"), card=$("metroCard");
   if(h && card && !Metro.running){
     const t=metroTempoOf(card);
@@ -1595,7 +1629,8 @@ function renderReady(){
         ${rd.soreness?`<span class="pill">💪 ${esc(rd.soreness)}</span>`:""}
       </div></div>`:""}
     <div class="card"><div class="eyebrow" style="margin-bottom:6px">Ablauf</div>${rows}</div>
-    ${audioCard()}`);
+    ${audioCard()}
+    ${taktCard()}`);
   setBar(`<button class="btn" onclick="startWorkout()">Los geht's</button>`);
 }
 function stepMetaShort(s){
