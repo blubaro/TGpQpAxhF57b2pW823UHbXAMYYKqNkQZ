@@ -374,6 +374,20 @@ a{color:var(--accent-ink)}
    the.coach (ehem. Coach Runner)  —  rendert workout-spec, gibt workout-result
    Single file, vanilla JS, offline-tauglich. schemaVersion 7.
 
+   ── DIESE DATEI IST ÖFFENTLICH ──────────────────────────────
+   app/index.html ist der einzige Teil des Repos, der veröffentlicht wird (GitHub Pages).
+   Deshalb gilt hier, auch im Kommentar: KEINE PERSONENBEZOGENEN DATEN. Konkret nichts
+   von alledem, weder im Code noch in einer Erklärung daneben:
+       Namen · E-Mail-Adressen · HF-/Gewichts-/Leistungswerte · Verletzungen · Ziele
+       Trainingsorte, Box- oder Vereinsnamen · Beispiel-Specs mit echten Zahlen
+   Die App kennt von sich aus niemanden: Workout, HF-Zonen und resultMailto kommen zur
+   LAUFZEIT aus der Spec (#w=… oder Paste) — hier steht kein einziger Default davon.
+   Auch Design-Entscheidungen werden sachlich begründet ("verworfen, weil durchgehender
+   Takt stört"), nicht über Personen ("X wollte lieber…") — die Begründung ist ohnehin
+   das Nützliche, der Name ist nur das Leck.
+   Bewacht wird die Regel von tests/check_privacy.py, das in tests/run.sh mitläuft.
+   ────────────────────────────────────────────────────────────
+
    Änderungen v1 → v2:
    - cardio strukturiert via segments[] (statt flachem durationMin+targetHr)
    - circuit.stations[] akzeptiert distanceM (z.B. 30m Carry als Station)
@@ -865,10 +879,10 @@ window.addEventListener("focus",()=>{ if(S.screen==="run") keepAwake(); });
    OPTIK ist der Hauptkanal: Balken (= Position, voll = unten), Phasenwort, Restsekunden
    und eine Tönung am Bildschirmrand fürs periphere Sehen.
 
-   TON — dritter Anlauf, und diesmal Chris' eigener Entwurf (09.09.2026). Verworfen wurden
-   davor: Klick ("stört"), Tonstufen ("hört man nicht raus"), Gleitton ("zu krass") — alle
-   drei hatten dasselbe Problem, sie liefen DURCHGEHEND. Der Entwurf hier klingt nur an den
-   UMKEHRPUNKTEN, und die Tonhöhe sagt, WO man ist:
+   TON — dritter Anlauf (09.09.2026). Verworfen wurden davor: Klick ("stört"), Tonstufen
+   ("hört man nicht raus"), Gleitton ("zu krass") — alle drei hatten dasselbe Problem, sie
+   liefen DURCHGEHEND. Der Entwurf hier klingt nur an den UMKEHRPUNKTEN, und die Tonhöhe
+   sagt, WO man ist:
 
        unten = tiefer Ton · oben = hoher Ton — nur diese zwei.
 
